@@ -132,20 +132,22 @@ type Resource struct {
 	// VerbsDescription: the list of verbs to use on this resource
 	// +required
 	VerbsDescription []VerbsDescription `json:"verbsDescription"`
-	// Identifiers: the list of fields to use as identifiers - used to populate the status of the resource
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="Identifiers are immutable, you cannot change them once the CRD has been generated"
+	// Identifiers: the list of fields to use as identifiers - used to populate the status of the resource.
+	// Mutable across spec.version bumps: when spec.version changes, a new CRD version is appended and the
+	// new identifiers apply to that version. Older served versions keep their original identifiers via the
+	// vacuum-storage + conversion webhook machinery (mirrors core-provider's chart.version pattern).
 	// +optional
 	Identifiers []string `json:"identifiers,omitempty"`
-	// AdditionalStatusFields: the list of fields to use as additional status fields - used to populate the status of the resource
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="AdditionalStatusFields are immutable, you cannot change them once the CRD has been generated"
+	// AdditionalStatusFields: status fields the controller mirrors into each CR's status block.
+	// Mutable across spec.version bumps (see Identifiers note above).
 	// +optional
 	AdditionalStatusFields []string `json:"additionalStatusFields,omitempty"`
-	// ConfigurationFields: the list of fields to use as configuration fields
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="ConfigurationFields are immutable, you cannot change them once the CRD has been generated"
+	// ConfigurationFields: header / query / cookie configuration fields the controller injects.
+	// Mutable across spec.version bumps (see Identifiers note above).
 	// +optional
 	ConfigurationFields []ConfigurationField `json:"configurationFields,omitempty"`
-	// ExcludedSpecFields: the list of fields to exclude from the spec of the generated CRD (for example server-generated technical IDs could be excluded)
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="ExcludedSpecFields are immutable, you cannot change them once the CRD has been generated"
+	// ExcludedSpecFields: fields excluded from the spec of the generated CRD (e.g., server-generated IDs).
+	// Mutable across spec.version bumps (see Identifiers note above).
 	// +optional
 	ExcludedSpecFields []string `json:"excludedSpecFields,omitempty"`
 }
@@ -163,6 +165,16 @@ type RestDefinitionSpec struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="ResourceGroup is immutable, you cannot change that once the CRD has been generated"
 	// +required
 	ResourceGroup string `json:"resourceGroup"`
+	// Version: the CRD version this RestDefinition generates (e.g. "v1alpha1", "v0-1-0").
+	// Defaults to "v1alpha1" when empty (preserves prior single-version behavior). When the user bumps
+	// this value (and any of Identifiers / AdditionalStatusFields / ConfigurationFields / ExcludedSpecFields
+	// changes alongside it), the controller APPENDS a new CRD version rather than rejecting the change.
+	// Mirrors core-provider's CompositionDefinition.chart.version pattern: the vacuum storage version
+	// + conversion webhook preserve data across versions; each CRD version serves its own schema view.
+	// +optional
+	// +kubebuilder:default:="v1alpha1"
+	// +kubebuilder:validation:Pattern=`^v[0-9]+(alpha[0-9]+|beta[0-9]+|-[0-9]+-[0-9]+)?$|^[0-9]+\.[0-9]+\.[0-9]+$`
+	Version string `json:"version,omitempty"`
 	// The resource to manage
 	// +required
 	Resource Resource `json:"resource"`
