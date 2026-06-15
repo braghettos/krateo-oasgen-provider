@@ -134,3 +134,142 @@ jobs:
       - name: Update CRD doc
         run: |
           curl -s https://doc.crds.dev/github.com/${{ github.repository }}@${{  github.ref_name }}
+
+  # Regenerate the static RestDefinition CRD (group ogen.krateo.io) with controller-gen
+  # and publish it into the chart repo's CRD sub-chart (crds-subchart/) via a PR.
+  # Only this one static api CRD is shipped; the dynamic CRDs that oasgen-provider
+  # builds at runtime from OpenAPI specs (plumbing/crdgen) are intentionally NOT shipped.
+  crds:
+    name: Publish CRDs to chart repo
+    runs-on: ubuntu-latest
+    needs:
+      - build
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Generate CRDs
+        run: |
+          # apis/generate.go: controller-gen -> ./crds (the RestDefinition CRD).
+          go generate ./apis/...
+          echo "=== Generated CRDs ==="
+          ls -la ./crds
+
+      - name: Push CRDs to braghettos/krateo-oasgen-provider-chart (crds-subchart) via PR
+        env:
+          GH_TOKEN: ${{ secrets.PAT }}
+        run: |
+          set -eo pipefail
+          cd "$GITHUB_WORKSPACE"
+
+          TARGET_REPO="braghettos/krateo-oasgen-provider-chart"
+          TAG="${GITHUB_REF_NAME}"
+          BRANCH="oasgen-provider-crds-${TAG}"
+          echo "Target repo: $TARGET_REPO | tag: $TAG | branch: $BRANCH"
+
+          # The generated CRDs must exist locally before we touch the chart repo.
+          shopt -s nullglob
+          LOCAL_CRDS=("$GITHUB_WORKSPACE"/crds/*.yaml)
+          if [ "${#LOCAL_CRDS[@]}" -eq 0 ]; then
+            echo "ERROR: no generated CRDs found in ./crds" >&2
+            exit 1
+          fi
+          echo "Generated ${#LOCAL_CRDS[@]} CRD file(s)."
+
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Clone the chart repo and authenticate the push remote.
+          gh repo clone "$TARGET_REPO" /tmp/chart
+          cd /tmp/chart
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git"
+          git fetch origin
+          git checkout main
+          git pull origin main
+
+          # One-time migration: rename the legacy crd-chart/ -> crds-subchart/.
+          # git mv preserves Chart.yaml/values.* so the Helm chart name
+          # (krateo-oasgen-provider-crd, pinned by the installer) is unchanged.
+          if [ -d crd-chart ] && [ ! -d crds-subchart ]; then
+            echo "Migrating crd-chart/ -> crds-subchart/"
+            git mv crd-chart crds-subchart
+          fi
+          mkdir -p crds-subchart/templates
+
+          # Refresh the CRD templates: drop the previous set, copy the freshly generated one.
+          rm -f crds-subchart/templates/*.yaml
+          cp "$GITHUB_WORKSPACE"/crds/*.yaml crds-subchart/templates/
+
+          # Safety net: the old chart directory must not survive.
+          if [ -d crd-chart ]; then git rm -r crd-chart; fi
+
+          # Bump the CRD sub-chart version a patch (versioned independently of the app
+          # chart). Chart.yaml may carry the CHART_VERSION placeholder (substituted by
+          # the chart repo's release CI) — in that case seed 0.0.0 before bumping.
+          CHART_FILE="crds-subchart/Chart.yaml"
+          CUR_VER="$(grep -E '^version:' "$CHART_FILE" | head -1 | sed -E 's/^version:[[:space:]]*//; s/["'"'"']//g')"
+          if ! echo "$CUR_VER" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Chart version '$CUR_VER' is not semver (placeholder?) — seeding 0.0.0"
+            CUR_VER="0.0.0"
+          fi
+          NEW_VER="$(echo "$CUR_VER" | awk -F. '{printf "%d.%d.%d", $1, $2, $3+1}')"
+          echo "Bumping crds-subchart version: ${CUR_VER} -> ${NEW_VER}"
+          sed -i -E "s/^version:.*/version: ${NEW_VER}/" "$CHART_FILE"
+
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "crds-subchart already matches the generated CRDs — nothing to push."
+            exit 0
+          fi
+
+          echo "=== Changes to publish ==="
+          git diff --cached --name-status
+
+          # Recreate a clean per-tag branch off main, then carry the staged changes onto it.
+          if git ls-remote --heads origin "$BRANCH" | grep -q "$BRANCH"; then
+            echo "Deleting stale remote branch '$BRANCH'"
+            git push origin --delete "$BRANCH" || true
+          fi
+          git checkout -b "$BRANCH"
+
+          git commit -m "Update RestDefinition CRD (crds-subchart) from tag ${TAG}
+
+          Regenerated from braghettos/krateo-oasgen-provider @ ${TAG} with controller-gen.
+          Migrates crd-chart -> crds-subchart (if present) and bumps the CRD sub-chart
+          version to ${NEW_VER}. Helm chart name unchanged: krateo-oasgen-provider-crd.
+          Workflow run: ${GITHUB_RUN_ID}"
+
+          git push origin "$BRANCH"
+
+          # Open a PR against the chart repo, or update the existing one for this branch.
+          PR_TITLE="Update RestDefinition CRD (crds-subchart) — ${TAG}"
+          PR_BODY="Automated update of the \`RestDefinition\` CRD in \`crds-subchart/templates/\` from \`braghettos/krateo-oasgen-provider\` @ \`${TAG}\`.
+
+          - Regenerated with controller-gen (\`go generate ./apis/...\`).
+          - Migrates \`crd-chart\` → \`crds-subchart\` if present (Helm chart name unchanged: \`krateo-oasgen-provider-crd\`).
+          - Bumps the CRD sub-chart version to \`${NEW_VER}\` (versioned independently of the app chart).
+
+          Workflow run: \`${GITHUB_RUN_ID}\`."
+
+          PR_STATE=$(gh pr view "$BRANCH" --repo "$TARGET_REPO" --json state -q .state 2>/dev/null || echo "NONE")
+          case "$PR_STATE" in
+            OPEN)
+              echo "Existing open PR for '$BRANCH' was updated by the push."
+              ;;
+            CLOSED)
+              gh pr reopen "$BRANCH" --repo "$TARGET_REPO" \
+                || gh pr create --title "$PR_TITLE" --body "$PR_BODY" --head "$BRANCH" --base main --repo "$TARGET_REPO"
+              ;;
+            *)
+              gh pr create --title "$PR_TITLE" --body "$PR_BODY" --head "$BRANCH" --base main --repo "$TARGET_REPO"
+              ;;
+          esac
