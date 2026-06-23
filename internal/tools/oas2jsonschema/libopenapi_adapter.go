@@ -312,9 +312,12 @@ func convertLibopenapiSchemaWithVisited(
 	}
 
 	// Format handling
-	// If a format is specified, append it to the description for additional context.
-	// There is no format validation
+	// Preserve the format on the domain schema so numeric widths (notably int64)
+	// survive into the generated JSON schema / CRD instead of being downgraded to
+	// int32. The format is also appended to the description for additional context
+	// (e.g. for string formats that are not emitted as a JSON Schema "format").
 	if s.Format != "" {
+		domainSchema.Format = s.Format
 		domainSchema.Description = appendFormatToDescription(domainSchema.Description, s.Format)
 	}
 

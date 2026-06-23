@@ -363,6 +363,17 @@ func schemaToMapWithVisited(
 		m["enum"] = schema.Enum
 	}
 
+	// Process numeric format. Emitting the format keeps the integer width
+	// (notably int64) so downstream CRD generation does not silently treat the
+	// field as int32 — which would make the kube-apiserver reject any value
+	// above 2^31-1 (e.g. byte-sized fields such as disk size or memory). Only
+	// the well-known numeric formats are emitted as a JSON Schema "format";
+	// other formats remain captured in the description.
+	switch schema.Format {
+	case "int32", "int64", "float", "double":
+		m["format"] = schema.Format
+	}
+
 	// Process extensions
 	if len(schema.Extensions) > 0 {
 		for k, v := range schema.Extensions {

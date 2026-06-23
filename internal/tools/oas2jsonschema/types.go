@@ -78,7 +78,7 @@ type Schema struct {
 	Enum                 []interface{}
 	AdditionalProperties bool
 	MaxProperties        int
-	Format               string                 // Not validated but added value to description if present
+	Format               string                 // JSON Schema "format"; numeric formats (int32/int64/float/double) are emitted into the generated schema, all formats are also added to the description
 	Extensions           map[string]interface{} // Currently not used but can hold custom extensions
 }
 
@@ -188,6 +188,7 @@ func (s *Schema) deepCopyRec(visited map[*Schema]*Schema) *Schema {
 	newSchema.Default = s.Default
 	newSchema.AdditionalProperties = s.AdditionalProperties
 	newSchema.MaxProperties = s.MaxProperties
+	newSchema.Format = s.Format
 
 	if s.Enum != nil {
 		newSchema.Enum = make([]interface{}, len(s.Enum))
