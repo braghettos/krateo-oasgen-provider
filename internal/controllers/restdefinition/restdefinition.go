@@ -14,11 +14,12 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 
 	"github.com/krateoplatformops/plumbing/env"
+	"github.com/krateoplatformops/plumbing/kubeutil/event"
+	"github.com/krateoplatformops/plumbing/kubeutil/eventrecorder"
 	rtv1 "github.com/krateoplatformops/provider-runtime/apis/common/v1"
 
 	definitionv1alpha1 "github.com/krateoplatformops/oasgen-provider/apis/restdefinitions/v1alpha1"
 	"github.com/krateoplatformops/provider-runtime/pkg/controller"
-	"github.com/krateoplatformops/provider-runtime/pkg/event"
 	"github.com/krateoplatformops/provider-runtime/pkg/logging"
 	"github.com/krateoplatformops/provider-runtime/pkg/meta"
 	"github.com/krateoplatformops/provider-runtime/pkg/ratelimiter"
@@ -64,14 +65,26 @@ var (
 	RDCrbacConfigFolder       = path.Join(os.TempDir(), "assets/rdc-rbac/")
 )
 
-func Setup(mgr ctrl.Manager, o controller.Options) error {
+func Setup(mgr ctrl.Manager, o controller.Options, metrics reconciler.MetricsRecorder) error {
 	name := reconciler.ControllerName(definitionv1alpha1.RestDefinitionGroupKind)
 
 	log := o.Logger.WithValues("controller", name)
 
+	// recorder (legacy k8s.io/client-go/tools/record) is used directly by the
+	// external client's Eventf calls.
 	recorder := mgr.GetEventRecorderFor(name)
 
 	cfg := mgr.GetConfig()
+
+	// apiRecorder (k8s.io/client-go/tools/events) backs the reconciler's
+	// event.NewAPIRecorder, mirroring core-provider's eventrecorder.Create wiring;
+	// provider-runtime v1.2's event.Recorder moved to plumbing/kubeutil/event which
+	// expects the newer events.EventRecorder.
+	apiRecorder, err := eventrecorder.Create(context.Background(), cfg, name, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create event recorder: %w", err)
+	}
+
 	cli, err := client.New(cfg, client.Options{})
 	if err != nil {
 		return fmt.Errorf("failed to create kube client: %w", err)
@@ -95,7 +108,8 @@ func Setup(mgr ctrl.Manager, o controller.Options) error {
 		reconciler.WithCreationGracePeriod(reconcileGracePeriod),
 		reconciler.WithPollInterval(o.PollInterval),
 		reconciler.WithLogger(log),
-		reconciler.WithRecorder(event.NewAPIRecorder(recorder)))
+		reconciler.WithMetrics(metrics),
+		reconciler.WithRecorder(event.NewAPIRecorder(apiRecorder)))
 
 	return ctrl.NewControllerManagedBy(mgr).
 		Named(name).
