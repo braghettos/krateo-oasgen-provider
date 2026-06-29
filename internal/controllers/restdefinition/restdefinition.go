@@ -43,8 +43,10 @@ import (
 	"github.com/krateoplatformops/provider-runtime/pkg/reconciler"
 	"github.com/krateoplatformops/provider-runtime/pkg/resource"
 
+	oteltelemetry "github.com/krateoplatformops/oasgen-provider/internal/tools/telemetry"
 	"github.com/krateoplatformops/oasgen-provider/internal/tools/text"
 	"github.com/krateoplatformops/plumbing/crdgen"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 const (
@@ -156,11 +158,20 @@ type external struct {
 	parser oas2jsonschema.Parser
 }
 
-func (e *external) Observe(ctx context.Context, mg resource.Managed) (reconciler.ExternalObservation, error) {
+func (e *external) Observe(ctx context.Context, mg resource.Managed) (obs reconciler.ExternalObservation, err error) {
 	cr, ok := mg.(*definitionv1alpha1.RestDefinition)
 	if !ok {
 		return reconciler.ExternalObservation{}, errors.New(errNotRestDefinition)
 	}
+
+	ctx, span := oteltelemetry.Tracer().Start(ctx, "restdefinition.observe")
+	defer span.End()
+	defer func() { oteltelemetry.RecordError(span, err) }()
+	span.SetAttributes(
+		attribute.String("k8s.object.name", cr.Name),
+		attribute.String("k8s.object.namespace", cr.Namespace),
+		attribute.String("oas.source", cr.Spec.OASPath),
+	)
 
 	gvk := schema.GroupVersionKind{
 		Group:   cr.Spec.ResourceGroup,
@@ -324,11 +335,20 @@ func (e *external) Observe(ctx context.Context, mg resource.Managed) (reconciler
 	}, nil
 }
 
-func (e *external) Create(ctx context.Context, mg resource.Managed) error {
+func (e *external) Create(ctx context.Context, mg resource.Managed) (err error) {
 	cr, ok := mg.(*definitionv1alpha1.RestDefinition)
 	if !ok {
 		return errors.New(errNotRestDefinition)
 	}
+
+	ctx, span := oteltelemetry.Tracer().Start(ctx, "restdefinition.create")
+	defer span.End()
+	defer func() { oteltelemetry.RecordError(span, err) }()
+	span.SetAttributes(
+		attribute.String("k8s.object.name", cr.Name),
+		attribute.String("k8s.object.namespace", cr.Namespace),
+		attribute.String("oas.source", cr.Spec.OASPath),
+	)
 
 	if !meta.IsActionAllowed(cr, meta.ActionCreate) {
 		e.log.Debug("External resource should not be created by provider, skip creating.")
@@ -415,7 +435,18 @@ func (e *external) Create(ctx context.Context, mg resource.Managed) error {
 			resourceConfig,
 		)
 
-		result, err := generator.Generate()
+		ctx, genSpan := oteltelemetry.Tracer().Start(ctx, "restdefinition.generate_crd")
+		defer genSpan.End()
+		defer func() { oteltelemetry.RecordError(genSpan, err) }()
+		genSpan.SetAttributes(
+			attribute.String("k8s.object.name", cr.Name),
+			attribute.String("k8s.object.namespace", cr.Namespace),
+			attribute.String("crd.group", gvk.Group),
+			attribute.String("crd.kind", gvk.Kind),
+		)
+
+		var result *oas2jsonschema.GenerationResult
+		result, err = generator.Generate()
 		if err != nil {
 			// Fatal error, we cannot continue
 			return fmt.Errorf("generating schemas: %w", err)
@@ -567,11 +598,20 @@ func (e *external) Create(ctx context.Context, mg resource.Managed) error {
 	return err
 }
 
-func (e *external) Update(ctx context.Context, mg resource.Managed) error {
+func (e *external) Update(ctx context.Context, mg resource.Managed) (err error) {
 	cr, ok := mg.(*definitionv1alpha1.RestDefinition)
 	if !ok {
 		return errors.New(errNotRestDefinition)
 	}
+
+	ctx, span := oteltelemetry.Tracer().Start(ctx, "restdefinition.update")
+	defer span.End()
+	defer func() { oteltelemetry.RecordError(span, err) }()
+	span.SetAttributes(
+		attribute.String("k8s.object.name", cr.Name),
+		attribute.String("k8s.object.namespace", cr.Namespace),
+		attribute.String("oas.source", cr.Spec.OASPath),
+	)
 
 	doc, err := e.getDocumentModelFromCR(ctx, cr)
 	if err != nil {
@@ -642,11 +682,20 @@ func (e *external) Update(ctx context.Context, mg resource.Managed) error {
 	return nil
 }
 
-func (e *external) Delete(ctx context.Context, mg resource.Managed) error {
+func (e *external) Delete(ctx context.Context, mg resource.Managed) (err error) {
 	cr, ok := mg.(*definitionv1alpha1.RestDefinition)
 	if !ok {
 		return errors.New(errNotRestDefinition)
 	}
+
+	ctx, span := oteltelemetry.Tracer().Start(ctx, "restdefinition.delete")
+	defer span.End()
+	defer func() { oteltelemetry.RecordError(span, err) }()
+	span.SetAttributes(
+		attribute.String("k8s.object.name", cr.Name),
+		attribute.String("k8s.object.namespace", cr.Namespace),
+		attribute.String("oas.source", cr.Spec.OASPath),
+	)
 
 	// Set to true by default to avoid issues in case of errors when getting the document model from the CR.
 	// During a helm uninstall of a provider, the ConfigMap containing the OAS document might already be deleted
@@ -784,10 +833,18 @@ func manageFinalizers(ctx context.Context, kubecli client.Client, cr *definition
 	return nil
 }
 
-func (e *external) getDocumentModelFromCR(ctx context.Context, cr *definitionv1alpha1.RestDefinition) (oas2jsonschema.OASDocument, error) {
+func (e *external) getDocumentModelFromCR(ctx context.Context, cr *definitionv1alpha1.RestDefinition) (doc oas2jsonschema.OASDocument, err error) {
+	ctx, span := oteltelemetry.Tracer().Start(ctx, "restdefinition.parse_oas")
+	defer span.End()
+	defer func() { oteltelemetry.RecordError(span, err) }()
 	OASPath := cr.Spec.OASPath
+	span.SetAttributes(
+		attribute.String("k8s.object.name", cr.Name),
+		attribute.String("k8s.object.namespace", cr.Namespace),
+		attribute.String("oas.source", OASPath),
+	)
 	basePath := "/tmp/ogen-provider"
-	err := os.MkdirAll(basePath, os.ModePerm)
+	err = os.MkdirAll(basePath, os.ModePerm)
 	defer os.RemoveAll(basePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create directory: %w", err)
