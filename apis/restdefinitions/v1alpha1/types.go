@@ -271,14 +271,12 @@ type VerbsDescription struct {
 	// genuinely signals a deleted resource would mask that deletion.
 	// +optional
 	TolerateCodes []int `json:"tolerateCodes,omitempty"`
-<<<<<<< HEAD
 	// NotFoundCodes lists HTTP status codes that, for this verb, mean the external resource does NOT exist
 	// (i.e. are remapped to a not-found result) even though they are not 404. Use it for APIs that signal
 	// absence with a non-standard code the reconciler would otherwise treat as an error or as existing —
 	// e.g. an existence check that returns 410 Gone or 204 for a missing resource. Intended for get/findby.
 	// +optional
 	NotFoundCodes []int `json:"notFoundCodes,omitempty"`
-=======
 	// Async declares long-running-operation (async) handling for this mutating verb: after the trigger call
 	// returns an operation handle, the controller polls an operations endpoint until it reaches a terminal
 	// status, turning an asynchronous API into a synchronous reconcile. Set only on create/update/delete.
@@ -342,7 +340,6 @@ type PollConfig struct {
 	// TimeoutSeconds: overall cap on the polling loop. 0 means no explicit cap (bounded by MaxAttempts).
 	// +optional
 	TimeoutSeconds int `json:"timeoutSeconds,omitempty"`
->>>>>>> feat/verb-async-engine
 }
 
 // HeaderItem is a single static HTTP header injected on every request for a verb.
