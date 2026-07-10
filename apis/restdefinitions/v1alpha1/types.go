@@ -271,12 +271,78 @@ type VerbsDescription struct {
 	// genuinely signals a deleted resource would mask that deletion.
 	// +optional
 	TolerateCodes []int `json:"tolerateCodes,omitempty"`
+<<<<<<< HEAD
 	// NotFoundCodes lists HTTP status codes that, for this verb, mean the external resource does NOT exist
 	// (i.e. are remapped to a not-found result) even though they are not 404. Use it for APIs that signal
 	// absence with a non-standard code the reconciler would otherwise treat as an error or as existing —
 	// e.g. an existence check that returns 410 Gone or 204 for a missing resource. Intended for get/findby.
 	// +optional
 	NotFoundCodes []int `json:"notFoundCodes,omitempty"`
+=======
+	// Async declares long-running-operation (async) handling for this mutating verb: after the trigger call
+	// returns an operation handle, the controller polls an operations endpoint until it reaches a terminal
+	// status, turning an asynchronous API into a synchronous reconcile. Set only on create/update/delete.
+	// +optional
+	Async *AsyncConfig `json:"async,omitempty"`
+}
+
+// AsyncConfig declares how a mutating verb's long-running operation is driven to completion.
+type AsyncConfig struct {
+	// OperationRef: how to extract the operation handle from the trigger response.
+	// +required
+	OperationRef OperationRef `json:"operationRef"`
+	// Poll: the polling endpoint and its terminal semantics.
+	// +required
+	Poll PollConfig `json:"poll"`
+	// PostGet: after terminal success, re-run the resource's get/findby to fetch the final state.
+	// +optional
+	PostGet bool `json:"postGet,omitempty"`
+}
+
+// OperationRef declares how to extract the async operation handle from the trigger response.
+type OperationRef struct {
+	// In: where the handle is located: "body" (a JSONPath into the trigger response body) or "header".
+	// +kubebuilder:validation:Enum=body;header
+	// +required
+	In string `json:"in"`
+	// Path: the JSONPath (for in=body) or header name (for in=header) that carries the handle.
+	// +required
+	Path string `json:"path"`
+	// JQ: optional gojq program to derive the handle from the raw value at Path (e.g. an id from a URL).
+	// +optional
+	JQ *JQProgram `json:"jq,omitempty"`
+}
+
+// PollConfig declares the polling endpoint and the values that mark a terminal outcome.
+type PollConfig struct {
+	// Method: the HTTP method for the poll call (GET in practice).
+	// +kubebuilder:validation:Enum=GET
+	// +optional
+	Method string `json:"method,omitempty"`
+	// Path: the poll endpoint template; the token {operationId} is bound from the extracted handle. The path
+	// must be declared in the OAS document.
+	// +required
+	Path string `json:"path"`
+	// StatusPath: JSONPath to the status field in the poll response.
+	// +required
+	StatusPath string `json:"statusPath"`
+	// SuccessValues: status values that mark terminal success.
+	// +kubebuilder:validation:MinItems=1
+	// +required
+	SuccessValues []string `json:"successValues"`
+	// FailureValues: status values that mark terminal failure.
+	// +optional
+	FailureValues []string `json:"failureValues,omitempty"`
+	// IntervalSeconds: delay between polls. Defaults to 1.
+	// +optional
+	IntervalSeconds int `json:"intervalSeconds,omitempty"`
+	// MaxAttempts: maximum number of poll attempts. Defaults to 10.
+	// +optional
+	MaxAttempts int `json:"maxAttempts,omitempty"`
+	// TimeoutSeconds: overall cap on the polling loop. 0 means no explicit cap (bounded by MaxAttempts).
+	// +optional
+	TimeoutSeconds int `json:"timeoutSeconds,omitempty"`
+>>>>>>> feat/verb-async-engine
 }
 
 // HeaderItem is a single static HTTP header injected on every request for a verb.
