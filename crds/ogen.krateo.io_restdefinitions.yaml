@@ -298,6 +298,28 @@ spec:
                               rule: (has(self.inPath)?1:0)+(has(self.inQuery)?1:0)+(has(self.inBody)?1:0)+(has(self.inResponse)?1:0)
                                 == 1
                           type: array
+                        headers:
+                          description: |-
+                            Headers is a list of static HTTP headers to inject on every request for this verb, e.g. an API that
+                            requires a specific 'Accept' media-type or 'Content-Type' the OAS does not otherwise enforce. Header
+                            values are sent verbatim and are not validated against the OAS.
+                          items:
+                            description: HeaderItem is a single static HTTP header
+                              injected on every request for a verb.
+                            properties:
+                              name:
+                                description: Name is the HTTP header name, e.g. 'Accept'
+                                  or 'Content-Type'.
+                                type: string
+                              value:
+                                description: Value is the HTTP header value, sent
+                                  verbatim.
+                                type: string
+                            required:
+                            - name
+                            - value
+                            type: object
+                          type: array
                         identifiersMatchPolicy:
                           description: |-
                             IdentifiersMatchPolicy defines how to match identifiers for the 'findby' action. To be set only for 'findby' actions.
