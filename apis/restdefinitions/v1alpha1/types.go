@@ -265,6 +265,12 @@ type VerbsDescription struct {
 	// genuinely signals a deleted resource would mask that deletion.
 	// +optional
 	TolerateCodes []int `json:"tolerateCodes,omitempty"`
+	// NotFoundCodes lists HTTP status codes that, for this verb, mean the external resource does NOT exist
+	// (i.e. are remapped to a not-found result) even though they are not 404. Use it for APIs that signal
+	// absence with a non-standard code the reconciler would otherwise treat as an error or as existing —
+	// e.g. an existence check that returns 410 Gone or 204 for a missing resource. Intended for get/findby.
+	// +optional
+	NotFoundCodes []int `json:"notFoundCodes,omitempty"`
 }
 
 // HeaderItem is a single static HTTP header injected on every request for a verb.
