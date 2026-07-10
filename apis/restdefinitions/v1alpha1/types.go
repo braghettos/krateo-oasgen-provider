@@ -237,6 +237,21 @@ type VerbsDescription struct {
 	// If not set, no pagination will be used.
 	// +optional
 	Pagination *Pagination `json:"pagination,omitempty"`
+	// Headers is a list of static HTTP headers to inject on every request for this verb, e.g. an API that
+	// requires a specific 'Accept' media-type or 'Content-Type' the OAS does not otherwise enforce. Header
+	// values are sent verbatim and are not validated against the OAS.
+	// +optional
+	Headers []HeaderItem `json:"headers,omitempty"`
+}
+
+// HeaderItem is a single static HTTP header injected on every request for a verb.
+type HeaderItem struct {
+	// Name is the HTTP header name, e.g. 'Accept' or 'Content-Type'.
+	// +required
+	Name string `json:"name"`
+	// Value is the HTTP header value, sent verbatim.
+	// +required
+	Value string `json:"value"`
 }
 
 type Resource struct {
