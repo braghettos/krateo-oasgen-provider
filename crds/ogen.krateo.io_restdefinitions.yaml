@@ -413,6 +413,29 @@ spec:
                           description: 'Path: the path to the api - has to be the
                             same path as the one in the OAS file you are referencing'
                           type: string
+                        queries:
+                          description: |-
+                            Queries is a list of static query parameters to inject on every request for this verb, e.g. an
+                            API that requires a specific 'api-version' the CRD-generating path does not carry. Combined with the
+                            per-verb path/method and request fieldMapping, this expresses an alternative endpoint for a verb
+                            (e.g. an update routed to a different sub-API with its own api-version). Values are sent verbatim.
+                          items:
+                            description: QueryParam is a single static query parameter
+                              injected on every request for a verb.
+                            properties:
+                              name:
+                                description: Name is the query parameter name, e.g.
+                                  'api-version'.
+                                type: string
+                              value:
+                                description: Value is the query parameter value, sent
+                                  verbatim.
+                                type: string
+                            required:
+                            - name
+                            - value
+                            type: object
+                          type: array
                         requestFieldMapping:
                           description: |-
                             RequestFieldMapping provides explicit mapping from API parameters (path, query, or body)
