@@ -258,6 +258,12 @@ type VerbsDescription struct {
 	// values are sent verbatim and are not validated against the OAS.
 	// +optional
 	Headers []HeaderItem `json:"headers,omitempty"`
+	// Queries is a list of static query parameters to inject on every request for this verb, e.g. an
+	// API that requires a specific 'api-version' the CRD-generating path does not carry. Combined with the
+	// per-verb path/method and request fieldMapping, this expresses an alternative endpoint for a verb
+	// (e.g. an update routed to a different sub-API with its own api-version). Values are sent verbatim.
+	// +optional
+	Queries []QueryParam `json:"queries,omitempty"`
 	// TolerateCodes lists HTTP status codes that, for this verb, are treated as a successful EMPTY response
 	// instead of an error. Use it when a code that would otherwise fail the call actually means "the
 	// (sub-)resource is simply empty / not present yet" rather than a real failure — e.g. an API returning
@@ -279,6 +285,16 @@ type HeaderItem struct {
 	// +required
 	Name string `json:"name"`
 	// Value is the HTTP header value, sent verbatim.
+	// +required
+	Value string `json:"value"`
+}
+
+// QueryParam is a single static query parameter injected on every request for a verb.
+type QueryParam struct {
+	// Name is the query parameter name, e.g. 'api-version'.
+	// +required
+	Name string `json:"name"`
+	// Value is the query parameter value, sent verbatim.
 	// +required
 	Value string `json:"value"`
 }
