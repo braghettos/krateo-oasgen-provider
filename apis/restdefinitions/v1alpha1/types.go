@@ -237,6 +237,12 @@ type VerbsDescription struct {
 	// If not set, no pagination will be used.
 	// +optional
 	Pagination *Pagination `json:"pagination,omitempty"`
+	// SuccessCodes lists additional HTTP status codes to treat as success for this verb, beyond the 2xx
+	// codes declared for the operation in the OAS document. Use it when an API returns a non-standard
+	// success code the OAS does not document (e.g. a 201 or 202 that the reconciler would otherwise reject
+	// as an invalid status). Values are merged with the OAS-derived success codes, never replacing them.
+	// +optional
+	SuccessCodes []int `json:"successCodes,omitempty"`
 }
 
 type Resource struct {
