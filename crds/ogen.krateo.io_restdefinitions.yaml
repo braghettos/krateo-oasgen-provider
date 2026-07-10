@@ -341,6 +341,15 @@ spec:
                           - DELETE
                           - PATCH
                           type: string
+                        notFoundCodes:
+                          description: |-
+                            NotFoundCodes lists HTTP status codes that, for this verb, mean the external resource does NOT exist
+                            (i.e. are remapped to a not-found result) even though they are not 404. Use it for APIs that signal
+                            absence with a non-standard code the reconciler would otherwise treat as an error or as existing —
+                            e.g. an existence check that returns 410 Gone or 204 for a missing resource. Intended for get/findby.
+                          items:
+                            type: integer
+                          type: array
                         pagination:
                           description: |-
                             Pagination defines the pagination strategy for 'findby' actions. To be set only for 'findby' actions.
