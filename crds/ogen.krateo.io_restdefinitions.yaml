@@ -181,6 +181,14 @@ spec:
                               Exactly one API-side anchor must be set. The anchor kind implies the direction:
                               inPath/inQuery/inBody => request, inResponse => response.
                             properties:
+                              defaultIfAbsent:
+                                description: |-
+                                  DefaultIfAbsent, for a response entry (inResponse), supplies the value to inject at the CR-domain
+                                  destination when the API omits the source field entirely. This canonicalizes an absent field into a
+                                  known default so status population and drift comparison converge — e.g. an API that omits a boolean
+                                  object when it is false. It is an arbitrary JSON value (scalar, object or array). Ignored when the
+                                  source field is present, and ignored for request-direction entries.
+                                x-kubernetes-preserve-unknown-fields: true
                               inBody:
                                 description: |-
                                   InBody selects a REQUEST body field (request direction).
