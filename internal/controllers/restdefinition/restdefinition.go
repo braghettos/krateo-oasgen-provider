@@ -359,9 +359,10 @@ func (e *external) Create(ctx context.Context, mg resource.Managed) error {
 		verbs := make([]oas2jsonschema.Verb, len(cr.Spec.Resource.VerbsDescription))
 		for i, v := range cr.Spec.Resource.VerbsDescription {
 			verbs[i] = oas2jsonschema.Verb{
-				Action: v.Action,
-				Method: v.Method,
-				Path:   v.Path,
+				Action:       v.Action,
+				Method:       v.Method,
+				Path:         v.Path,
+				FieldMapping: toDomainFieldMapping(v),
 			}
 		}
 

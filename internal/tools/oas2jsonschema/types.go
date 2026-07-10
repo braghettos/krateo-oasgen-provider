@@ -58,6 +58,26 @@ type Verb struct {
 	Action string
 	Method string
 	Path   string
+	// FieldMapping carries the unified request/response field mappings declared for this verb.
+	// The generation layer consumes the response-direction entries (InResponse set) to resolve the type
+	// of relocated status fields against the response schema; request-direction entries are carried for
+	// completeness but are not used during generation.
+	FieldMapping []FieldMappingEntry
+}
+
+// FieldMappingEntry is a library-agnostic representation of a single RestDefinition fieldMapping entry,
+// carrying only what the generation layer needs: the API-side anchor, the CR-side destination, and the
+// kind of value transform (if any). It intentionally omits the transform payload (alias pairs or jq
+// source), which is runtime-only and irrelevant to schema generation.
+type FieldMappingEntry struct {
+	InPath           string
+	InQuery          string
+	InBody           string
+	InResponse       string
+	InCustomResource string
+	// ValueMappingType is "" (no transform, type resolvable from the source), "alias" (a statically-typed
+	// string/enum remap), or "jq" (an opaque program whose output type is not statically analyzable).
+	ValueMappingType string
 }
 
 // --- Library-Agnostic Domain Models ---

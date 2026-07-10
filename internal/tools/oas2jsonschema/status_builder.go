@@ -3,6 +3,7 @@ package oas2jsonschema
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	pathparsing "github.com/krateoplatformops/oasgen-provider/internal/tools/pathparsing"
 	"github.com/krateoplatformops/oasgen-provider/internal/tools/safety"
@@ -42,14 +43,49 @@ func (g *OASSchemaGenerator) BuildStatusSchema() ([]byte, []error, error) {
 
 // composeStatusSchema builds the status schema by finding nested fields in the response schema
 // and constructing a corresponding nested structure in the new status schema.
+//
+// When a status field is produced by a response-direction fieldMapping (inResponse -> inCustomResource),
+// the field's CR-domain name will not exist in the raw response schema; its type is instead resolved
+// through the mapping's source path (inResponse). A 'jq' value transform yields a type that is not
+// statically analyzable, so such fields fall back to string (documented, not a "not found" error).
 func (g *OASSchemaGenerator) composeStatusSchema(allStatusFields []string, responseSchema *Schema) (*Schema, []error) {
 	var warnings []error
 	statusSchema := &Schema{Type: []string{"object"}, Properties: []Property{}}
+	respMappings := g.responseFieldMappingsForStatus()
 
 	for _, fieldName := range allStatusFields {
 		pathSegments, err := pathparsing.ParsePath(fieldName)
 		if err != nil {
 			warnings = append(warnings, SchemaGenerationError{Code: CodeFieldNotFound, Message: fmt.Sprintf("invalid path format for status field '%s': %v", fieldName, err)})
+			continue
+		}
+		leaf := pathSegments[len(pathSegments)-1]
+
+		// If a response fieldMapping relocates this status field, resolve its type through the source path
+		// instead of looking up the CR-domain name (which is absent from the raw response).
+		if m, ok := respMappings[fieldName]; ok {
+			if m.ValueMappingType == "jq" {
+				// A jq transform's output type is not statically analyzable: default to string.
+				warnings = append(warnings, SchemaGenerationError{Code: CodeStatusFieldNotFound, Message: fmt.Sprintf("status field '%s' is produced by a jq value transform (inResponse '%s'); type is not statically known, defaulting to string", fieldName, m.InResponse)})
+				g.addPropertyByPath(statusSchema, pathSegments, Property{Name: leaf, Schema: &Schema{Type: []string{"string"}}})
+				continue
+			}
+
+			srcSegments, srcErr := pathparsing.ParsePath(m.InResponse)
+			if srcErr == nil {
+				if srcProp, srcFound := g.findPropertyByPath(responseSchema, srcSegments); srcFound {
+					schema := srcProp.Schema
+					if m.ValueMappingType == "alias" {
+						// Aliased values are CR-domain strings/enums; the source's own enum no longer applies.
+						schema = &Schema{Type: []string{"string"}, Description: srcProp.Schema.Description}
+					}
+					g.addPropertyByPath(statusSchema, pathSegments, Property{Name: leaf, Schema: schema})
+					continue
+				}
+			}
+			// Mapping declared but its source path is unresolvable: warn and fall back to string.
+			warnings = append(warnings, SchemaGenerationError{Code: CodeStatusFieldNotFound, Message: fmt.Sprintf("status field '%s' maps from response path '%s' which was not found, defaulting to string", fieldName, m.InResponse)})
+			g.addPropertyByPath(statusSchema, pathSegments, Property{Name: leaf, Schema: &Schema{Type: []string{"string"}}})
 			continue
 		}
 
@@ -61,12 +97,40 @@ func (g *OASSchemaGenerator) composeStatusSchema(allStatusFields []string, respo
 		} else {
 			// Fallback for fields not found in the response schema.
 			warnings = append(warnings, SchemaGenerationError{Code: CodeStatusFieldNotFound, Message: fmt.Sprintf("status field '%s' not found in response, defaulting to string", fieldName)})
-			fallbackProp := Property{Name: pathSegments[len(pathSegments)-1], Schema: &Schema{Type: []string{"string"}}} // Fallback to string type
+			fallbackProp := Property{Name: leaf, Schema: &Schema{Type: []string{"string"}}} // Fallback to string type
 			g.addPropertyByPath(statusSchema, pathSegments, fallbackProp)
 		}
 	}
 
 	return statusSchema, warnings
+}
+
+// responseFieldMappingsForStatus collects the response-direction fieldMapping entries declared on the
+// GET/FINDBY verbs (the verbs whose response feeds the status), keyed by their CR-domain destination.
+// A leading "status." prefix on inCustomResource is stripped so the key matches the bare status field
+// names in identifiers/additionalStatusFields. The GET verb takes precedence over FINDBY on conflict.
+func (g *OASSchemaGenerator) responseFieldMappingsForStatus() map[string]FieldMappingEntry {
+	out := map[string]FieldMappingEntry{}
+	if g.resourceConfig == nil {
+		return out
+	}
+	for _, action := range []string{ActionGet, ActionFindBy} {
+		for _, verb := range g.resourceConfig.Verbs {
+			if !strings.EqualFold(verb.Action, action) {
+				continue
+			}
+			for _, m := range verb.FieldMapping {
+				if m.InResponse == "" || m.InCustomResource == "" {
+					continue
+				}
+				dest := strings.TrimPrefix(m.InCustomResource, "status.")
+				if _, exists := out[dest]; !exists {
+					out[dest] = m
+				}
+			}
+		}
+	}
+	return out
 }
 
 // findPropertyByPath is the public entry point for finding a nested property.
