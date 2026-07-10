@@ -258,6 +258,13 @@ type VerbsDescription struct {
 	// values are sent verbatim and are not validated against the OAS.
 	// +optional
 	Headers []HeaderItem `json:"headers,omitempty"`
+	// TolerateCodes lists HTTP status codes that, for this verb, are treated as a successful EMPTY response
+	// instead of an error. Use it when a code that would otherwise fail the call actually means "the
+	// (sub-)resource is simply empty / not present yet" rather than a real failure — e.g. an API returning
+	// 404 for an optional collection with no entries. Use with care: tolerating 404 on a verb whose code
+	// genuinely signals a deleted resource would mask that deletion.
+	// +optional
+	TolerateCodes []int `json:"tolerateCodes,omitempty"`
 }
 
 // HeaderItem is a single static HTTP header injected on every request for a verb.
