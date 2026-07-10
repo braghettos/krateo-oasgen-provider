@@ -162,6 +162,134 @@ spec:
                           - delete
                           - findby
                           type: string
+                        fieldMapping:
+                          description: |-
+                            FieldMapping provides unified request/response value relocation and optional per-field value
+                            transforms (alias or jq). It supersedes RequestFieldMapping: request entries (inPath/inQuery/inBody)
+                            behave as before, and response entries (inResponse) normalize the observed body into the CR-domain
+                            shape at the reconcile chokepoint, before status population and drift comparison. Being reconcile
+                            behavior rather than CRD shape, it is intentionally mutable.
+                          items:
+                            description: |-
+                              FieldMappingItem defines a single unified mapping entry: it relocates a value between the Custom
+                              Resource and the external API (request OR response direction) and optionally transforms the value as
+                              it crosses that boundary. It generalizes RequestFieldMappingItem (which is retained, deprecated, for
+                              backward compatibility): the request anchors inPath/inQuery/inBody keep their existing meaning, and a
+                              new inResponse anchor selects a field of the API response body to be normalized into the CR-facing
+                              shape before status population and drift comparison.
+
+                              Exactly one API-side anchor must be set. The anchor kind implies the direction:
+                              inPath/inQuery/inBody => request, inResponse => response.
+                            properties:
+                              inBody:
+                                description: |-
+                                  InBody selects a REQUEST body field (request direction).
+                                  Only one of 'inPath', 'inQuery', 'inBody' or 'inResponse' can be set.
+                                type: string
+                              inCustomResource:
+                                description: |-
+                                  InCustomResource is the JSONPath to the field within the Custom Resource, e.g. 'spec.permission' or
+                                  'status.metadata.id'. For request entries it is the SOURCE of the value; for response entries it is
+                                  the CR-domain DESTINATION whose leaf name and parent path determine where the value lands.
+                                type: string
+                              inPath:
+                                description: |-
+                                  InPath selects a REQUEST path parameter (request direction).
+                                  Only one of 'inPath', 'inQuery', 'inBody' or 'inResponse' can be set.
+                                type: string
+                              inQuery:
+                                description: |-
+                                  InQuery selects a REQUEST query parameter (request direction).
+                                  Only one of 'inPath', 'inQuery', 'inBody' or 'inResponse' can be set.
+                                type: string
+                              inResponse:
+                                description: |-
+                                  InResponse selects a RESPONSE body field by JSONPath (response direction).
+                                  The value found here is transformed (if valueMapping is set) and relocated to the CR-domain
+                                  destination given by inCustomResource, so that status population and drift comparison operate on the
+                                  CR-domain shape.
+                                  Only one of 'inPath', 'inQuery', 'inBody' or 'inResponse' can be set.
+                                type: string
+                              valueMapping:
+                                description: ValueMapping optionally transforms the
+                                  value as it crosses the CR<->API boundary.
+                                properties:
+                                  aliases:
+                                    description: |-
+                                      Aliases is an explicit set of bidirectional CR<->API value pairs (used when type is 'alias').
+                                      On the request the CR value is rewritten to its apiValue; on the response the apiValue is rewritten
+                                      back to the CR value; any value without a matching pair passes through unchanged.
+                                    items:
+                                      description: 'ValueAlias is a single bidirectional
+                                        CR<->API value pair, e.g. {customResourceValue:
+                                        read, apiValue: pull}.'
+                                      properties:
+                                        apiValue:
+                                          description: APIValue is the corresponding
+                                            value as expressed by the external API
+                                            (API domain).
+                                          type: string
+                                        customResourceValue:
+                                          description: CustomResourceValue is the
+                                            value as expressed in the Custom Resource
+                                            (CR domain).
+                                          type: string
+                                      required:
+                                      - apiValue
+                                      - customResourceValue
+                                      type: object
+                                    type: array
+                                  jq:
+                                    description: |-
+                                      JQ is a gojq program (used when type is 'jq'), supplied inline or as a referenced .jq module.
+                                      The program is one-directional: for a round-tripping field, write the inverse program in the
+                                      opposite-direction entry.
+                                    properties:
+                                      entrypoint:
+                                        description: |-
+                                          Entrypoint is the jq function defined in the referenced module to invoke, e.g. "normalize".
+                                          If empty, the whole module body is executed as the program. Only meaningful together with ref.
+                                        type: string
+                                      inline:
+                                        description: Inline is a gojq source literal.
+                                          Best for short, single-use expressions.
+                                        type: string
+                                      ref:
+                                        description: |-
+                                          Ref references a self-contained .jq module asset, using the SAME URI scheme as spec.oasPath:
+                                            configmap://<namespace>/<name>/<key>   |   http(s)://<url>
+                                        pattern: ^(configmap:\/\/([a-z0-9-]+)\/([a-z0-9-]+)\/([a-zA-Z0-9.-_]+)|https?:\/\/\S+)$
+                                        type: string
+                                    type: object
+                                    x-kubernetes-validations:
+                                    - message: exactly one of inline or ref must be
+                                        set
+                                      rule: has(self.inline) != has(self.ref)
+                                    - message: entrypoint is only valid together with
+                                        ref
+                                      rule: '!has(self.entrypoint) || has(self.ref)'
+                                  type:
+                                    description: Type selects the transform tier.
+                                    enum:
+                                    - alias
+                                    - jq
+                                    type: string
+                                required:
+                                - type
+                                type: object
+                                x-kubernetes-validations:
+                                - message: aliases must be set when type is 'alias'
+                                  rule: 'self.type == ''alias'' ? has(self.aliases)
+                                    : true'
+                                - message: jq must be set when type is 'jq'
+                                  rule: 'self.type == ''jq'' ? has(self.jq) : true'
+                            type: object
+                            x-kubernetes-validations:
+                            - message: exactly one of inPath, inQuery, inBody or inResponse
+                                must be set
+                              rule: (has(self.inPath)?1:0)+(has(self.inQuery)?1:0)+(has(self.inBody)?1:0)+(has(self.inResponse)?1:0)
+                                == 1
+                          type: array
                         identifiersMatchPolicy:
                           description: |-
                             IdentifiersMatchPolicy defines how to match identifiers for the 'findby' action. To be set only for 'findby' actions.
@@ -259,6 +387,10 @@ spec:
                           description: |-
                             RequestFieldMapping provides explicit mapping from API parameters (path, query, or body)
                             to fields in the Custom Resource.
+
+                            Deprecated: use FieldMapping instead. RequestFieldMapping is request-direction only and carries no
+                            value transform; it is retained for backward compatibility and each entry is treated as an
+                            equivalent request-direction FieldMappingItem at load time. It will be removed after a migration window.
                           items:
                             description: |-
                               RequestFieldMappingItem defines a single mapping from a path parameter, query parameter or body field
@@ -295,6 +427,60 @@ spec:
                               rule: '(has(self.inPath) ? 1 : 0) + (has(self.inQuery)
                                 ? 1 : 0) + (has(self.inBody) ? 1 : 0) == 1'
                           type: array
+                        requestTransform:
+                          description: |-
+                            RequestTransform is a whole-document gojq program applied to the assembled request body immediately
+                            before it is sent. It is the document-scoped sibling of a per-field jq valueMapping.
+                          properties:
+                            entrypoint:
+                              description: |-
+                                Entrypoint is the jq function defined in the referenced module to invoke, e.g. "normalize".
+                                If empty, the whole module body is executed as the program. Only meaningful together with ref.
+                              type: string
+                            inline:
+                              description: Inline is a gojq source literal. Best for
+                                short, single-use expressions.
+                              type: string
+                            ref:
+                              description: |-
+                                Ref references a self-contained .jq module asset, using the SAME URI scheme as spec.oasPath:
+                                  configmap://<namespace>/<name>/<key>   |   http(s)://<url>
+                              pattern: ^(configmap:\/\/([a-z0-9-]+)\/([a-z0-9-]+)\/([a-zA-Z0-9.-_]+)|https?:\/\/\S+)$
+                              type: string
+                          type: object
+                          x-kubernetes-validations:
+                          - message: exactly one of inline or ref must be set
+                            rule: has(self.inline) != has(self.ref)
+                          - message: entrypoint is only valid together with ref
+                            rule: '!has(self.entrypoint) || has(self.ref)'
+                        responseTransform:
+                          description: |-
+                            ResponseTransform is a whole-document gojq program applied to the raw response body once, at the
+                            reconcile chokepoint, before per-field fieldMapping, status population and drift comparison. Input
+                            '.' is the entire response body and the single output replaces it. It is the declarative form of a
+                            plugin's whole-body response normalizer.
+                          properties:
+                            entrypoint:
+                              description: |-
+                                Entrypoint is the jq function defined in the referenced module to invoke, e.g. "normalize".
+                                If empty, the whole module body is executed as the program. Only meaningful together with ref.
+                              type: string
+                            inline:
+                              description: Inline is a gojq source literal. Best for
+                                short, single-use expressions.
+                              type: string
+                            ref:
+                              description: |-
+                                Ref references a self-contained .jq module asset, using the SAME URI scheme as spec.oasPath:
+                                  configmap://<namespace>/<name>/<key>   |   http(s)://<url>
+                              pattern: ^(configmap:\/\/([a-z0-9-]+)\/([a-z0-9-]+)\/([a-zA-Z0-9.-_]+)|https?:\/\/\S+)$
+                              type: string
+                          type: object
+                          x-kubernetes-validations:
+                          - message: exactly one of inline or ref must be set
+                            rule: has(self.inline) != has(self.ref)
+                          - message: entrypoint is only valid together with ref
+                            rule: '!has(self.entrypoint) || has(self.ref)'
                       required:
                       - action
                       - method

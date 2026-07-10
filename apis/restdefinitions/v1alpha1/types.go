@@ -92,6 +92,100 @@ type RequestFieldMappingItem struct {
 	InCustomResource string `json:"inCustomResource"`
 }
 
+// FieldMappingItem defines a single unified mapping entry: it relocates a value between the Custom
+// Resource and the external API (request OR response direction) and optionally transforms the value as
+// it crosses that boundary. It generalizes RequestFieldMappingItem (which is retained, deprecated, for
+// backward compatibility): the request anchors inPath/inQuery/inBody keep their existing meaning, and a
+// new inResponse anchor selects a field of the API response body to be normalized into the CR-facing
+// shape before status population and drift comparison.
+//
+// Exactly one API-side anchor must be set. The anchor kind implies the direction:
+// inPath/inQuery/inBody => request, inResponse => response.
+// +kubebuilder:validation:XValidation:rule="(has(self.inPath)?1:0)+(has(self.inQuery)?1:0)+(has(self.inBody)?1:0)+(has(self.inResponse)?1:0) == 1",message="exactly one of inPath, inQuery, inBody or inResponse must be set"
+type FieldMappingItem struct {
+	// InPath selects a REQUEST path parameter (request direction).
+	// Only one of 'inPath', 'inQuery', 'inBody' or 'inResponse' can be set.
+	// +optional
+	InPath string `json:"inPath,omitempty"`
+	// InQuery selects a REQUEST query parameter (request direction).
+	// Only one of 'inPath', 'inQuery', 'inBody' or 'inResponse' can be set.
+	// +optional
+	InQuery string `json:"inQuery,omitempty"`
+	// InBody selects a REQUEST body field (request direction).
+	// Only one of 'inPath', 'inQuery', 'inBody' or 'inResponse' can be set.
+	// +optional
+	InBody string `json:"inBody,omitempty"`
+	// InResponse selects a RESPONSE body field by JSONPath (response direction).
+	// The value found here is transformed (if valueMapping is set) and relocated to the CR-domain
+	// destination given by inCustomResource, so that status population and drift comparison operate on the
+	// CR-domain shape.
+	// Only one of 'inPath', 'inQuery', 'inBody' or 'inResponse' can be set.
+	// +optional
+	InResponse string `json:"inResponse,omitempty"`
+	// InCustomResource is the JSONPath to the field within the Custom Resource, e.g. 'spec.permission' or
+	// 'status.metadata.id'. For request entries it is the SOURCE of the value; for response entries it is
+	// the CR-domain DESTINATION whose leaf name and parent path determine where the value lands.
+	// +optional
+	InCustomResource string `json:"inCustomResource,omitempty"`
+	// ValueMapping optionally transforms the value as it crosses the CR<->API boundary.
+	// +optional
+	ValueMapping *ValueMapping `json:"valueMapping,omitempty"`
+}
+
+// ValueMapping declares a value transform applied to a FieldMappingItem. Exactly one tier is configured:
+// Tier 1 ('alias') is a finite, self-documenting set of bidirectional CR<->API value pairs; Tier 2 ('jq')
+// is a gojq program for the transforms the alias primitive cannot express (structural unwrap, conditional
+// or non-bijective mapping, null<->sentinel, arithmetic, string surgery). Bitwise/multi-call logic stays
+// out of scope (plugin territory).
+// +kubebuilder:validation:XValidation:rule="self.type == 'alias' ? has(self.aliases) : true",message="aliases must be set when type is 'alias'"
+// +kubebuilder:validation:XValidation:rule="self.type == 'jq' ? has(self.jq) : true",message="jq must be set when type is 'jq'"
+type ValueMapping struct {
+	// Type selects the transform tier.
+	// +kubebuilder:validation:Enum=alias;jq
+	// +required
+	Type string `json:"type"`
+	// Aliases is an explicit set of bidirectional CR<->API value pairs (used when type is 'alias').
+	// On the request the CR value is rewritten to its apiValue; on the response the apiValue is rewritten
+	// back to the CR value; any value without a matching pair passes through unchanged.
+	// +optional
+	Aliases []ValueAlias `json:"aliases,omitempty"`
+	// JQ is a gojq program (used when type is 'jq'), supplied inline or as a referenced .jq module.
+	// The program is one-directional: for a round-tripping field, write the inverse program in the
+	// opposite-direction entry.
+	// +optional
+	JQ *JQProgram `json:"jq,omitempty"`
+}
+
+// ValueAlias is a single bidirectional CR<->API value pair, e.g. {customResourceValue: read, apiValue: pull}.
+type ValueAlias struct {
+	// CustomResourceValue is the value as expressed in the Custom Resource (CR domain).
+	// +required
+	CustomResourceValue string `json:"customResourceValue"`
+	// APIValue is the corresponding value as expressed by the external API (API domain).
+	// +required
+	APIValue string `json:"apiValue"`
+}
+
+// JQProgram is a gojq program supplied EITHER inline OR as a reference to a self-contained .jq module
+// asset. Exactly one of Inline or Ref is set. It is the single type used everywhere jq is accepted:
+// per-field (ValueMapping.JQ) and document-level (VerbsDescription.RequestTransform/ResponseTransform).
+// +kubebuilder:validation:XValidation:rule="has(self.inline) != has(self.ref)",message="exactly one of inline or ref must be set"
+// +kubebuilder:validation:XValidation:rule="!has(self.entrypoint) || has(self.ref)",message="entrypoint is only valid together with ref"
+type JQProgram struct {
+	// Inline is a gojq source literal. Best for short, single-use expressions.
+	// +optional
+	Inline string `json:"inline,omitempty"`
+	// Ref references a self-contained .jq module asset, using the SAME URI scheme as spec.oasPath:
+	//   configmap://<namespace>/<name>/<key>   |   http(s)://<url>
+	// +optional
+	// +kubebuilder:validation:Pattern=`^(configmap:\/\/([a-z0-9-]+)\/([a-z0-9-]+)\/([a-zA-Z0-9.-_]+)|https?:\/\/\S+)$`
+	Ref string `json:"ref,omitempty"`
+	// Entrypoint is the jq function defined in the referenced module to invoke, e.g. "normalize".
+	// If empty, the whole module body is executed as the program. Only meaningful together with ref.
+	// +optional
+	Entrypoint string `json:"entrypoint,omitempty"`
+}
+
 // +kubebuilder:validation:XValidation:rule="self.action == 'findby' || !has(self.identifiersMatchPolicy)",message="identifiersMatchPolicy can only be set for 'findby' actions"
 // +kubebuilder:validation:XValidation:rule="self.action == 'findby' || !has(self.pagination)",message="pagination can only be set for 'findby' actions"
 type VerbsDescription struct {
@@ -108,8 +202,29 @@ type VerbsDescription struct {
 	Path string `json:"path"`
 	// RequestFieldMapping provides explicit mapping from API parameters (path, query, or body)
 	// to fields in the Custom Resource.
+	//
+	// Deprecated: use FieldMapping instead. RequestFieldMapping is request-direction only and carries no
+	// value transform; it is retained for backward compatibility and each entry is treated as an
+	// equivalent request-direction FieldMappingItem at load time. It will be removed after a migration window.
 	// +optional
 	RequestFieldMapping []RequestFieldMappingItem `json:"requestFieldMapping,omitempty"`
+	// FieldMapping provides unified request/response value relocation and optional per-field value
+	// transforms (alias or jq). It supersedes RequestFieldMapping: request entries (inPath/inQuery/inBody)
+	// behave as before, and response entries (inResponse) normalize the observed body into the CR-domain
+	// shape at the reconcile chokepoint, before status population and drift comparison. Being reconcile
+	// behavior rather than CRD shape, it is intentionally mutable.
+	// +optional
+	FieldMapping []FieldMappingItem `json:"fieldMapping,omitempty"`
+	// RequestTransform is a whole-document gojq program applied to the assembled request body immediately
+	// before it is sent. It is the document-scoped sibling of a per-field jq valueMapping.
+	// +optional
+	RequestTransform *JQProgram `json:"requestTransform,omitempty"`
+	// ResponseTransform is a whole-document gojq program applied to the raw response body once, at the
+	// reconcile chokepoint, before per-field fieldMapping, status population and drift comparison. Input
+	// '.' is the entire response body and the single output replaces it. It is the declarative form of a
+	// plugin's whole-body response normalizer.
+	// +optional
+	ResponseTransform *JQProgram `json:"responseTransform,omitempty"`
 	// IdentifiersMatchPolicy defines how to match identifiers for the 'findby' action. To be set only for 'findby' actions.
 	// If not set, defaults to 'OR'.
 	// Possible values are 'AND' or 'OR'.
