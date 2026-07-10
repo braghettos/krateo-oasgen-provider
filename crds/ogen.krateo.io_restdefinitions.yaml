@@ -162,6 +162,118 @@ spec:
                           - delete
                           - findby
                           type: string
+                        async:
+                          description: |-
+                            Async declares long-running-operation (async) handling for this mutating verb: after the trigger call
+                            returns an operation handle, the controller polls an operations endpoint until it reaches a terminal
+                            status, turning an asynchronous API into a synchronous reconcile. Set only on create/update/delete.
+                          properties:
+                            operationRef:
+                              description: 'OperationRef: how to extract the operation
+                                handle from the trigger response.'
+                              properties:
+                                in:
+                                  description: 'In: where the handle is located: "body"
+                                    (a JSONPath into the trigger response body) or
+                                    "header".'
+                                  enum:
+                                  - body
+                                  - header
+                                  type: string
+                                jq:
+                                  description: 'JQ: optional gojq program to derive
+                                    the handle from the raw value at Path (e.g. an
+                                    id from a URL).'
+                                  properties:
+                                    entrypoint:
+                                      description: |-
+                                        Entrypoint is the jq function defined in the referenced module to invoke, e.g. "normalize".
+                                        If empty, the whole module body is executed as the program. Only meaningful together with ref.
+                                      type: string
+                                    inline:
+                                      description: Inline is a gojq source literal.
+                                        Best for short, single-use expressions.
+                                      type: string
+                                    ref:
+                                      description: |-
+                                        Ref references a self-contained .jq module asset, using the SAME URI scheme as spec.oasPath:
+                                          configmap://<namespace>/<name>/<key>   |   http(s)://<url>
+                                      pattern: ^(configmap:\/\/([a-z0-9-]+)\/([a-z0-9-]+)\/([a-zA-Z0-9.-_]+)|https?:\/\/\S+)$
+                                      type: string
+                                  type: object
+                                  x-kubernetes-validations:
+                                  - message: exactly one of inline or ref must be
+                                      set
+                                    rule: has(self.inline) != has(self.ref)
+                                  - message: entrypoint is only valid together with
+                                      ref
+                                    rule: '!has(self.entrypoint) || has(self.ref)'
+                                path:
+                                  description: 'Path: the JSONPath (for in=body) or
+                                    header name (for in=header) that carries the handle.'
+                                  type: string
+                              required:
+                              - in
+                              - path
+                              type: object
+                            poll:
+                              description: 'Poll: the polling endpoint and its terminal
+                                semantics.'
+                              properties:
+                                failureValues:
+                                  description: 'FailureValues: status values that
+                                    mark terminal failure.'
+                                  items:
+                                    type: string
+                                  type: array
+                                intervalSeconds:
+                                  description: 'IntervalSeconds: delay between polls.
+                                    Defaults to 1.'
+                                  type: integer
+                                maxAttempts:
+                                  description: 'MaxAttempts: maximum number of poll
+                                    attempts. Defaults to 10.'
+                                  type: integer
+                                method:
+                                  description: 'Method: the HTTP method for the poll
+                                    call (GET in practice).'
+                                  enum:
+                                  - GET
+                                  type: string
+                                path:
+                                  description: |-
+                                    Path: the poll endpoint template; the token {operationId} is bound from the extracted handle. The path
+                                    must be declared in the OAS document.
+                                  type: string
+                                statusPath:
+                                  description: 'StatusPath: JSONPath to the status
+                                    field in the poll response.'
+                                  type: string
+                                successValues:
+                                  description: 'SuccessValues: status values that
+                                    mark terminal success.'
+                                  items:
+                                    type: string
+                                  minItems: 1
+                                  type: array
+                                timeoutSeconds:
+                                  description: 'TimeoutSeconds: overall cap on the
+                                    polling loop. 0 means no explicit cap (bounded
+                                    by MaxAttempts).'
+                                  type: integer
+                              required:
+                              - path
+                              - statusPath
+                              - successValues
+                              type: object
+                            postGet:
+                              description: 'PostGet: after terminal success, re-run
+                                the resource''s get/findby to fetch the final state.'
+                              type: boolean
+                          required:
+                          - operationRef
+                          - poll
+                          type: object
                         fieldMapping:
                           description: |-
                             FieldMapping provides unified request/response value relocation and optional per-field value
