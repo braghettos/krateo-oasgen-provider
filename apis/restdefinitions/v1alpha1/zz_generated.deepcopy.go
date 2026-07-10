@@ -21,6 +21,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -94,6 +95,11 @@ func (in *FieldMappingItem) DeepCopyInto(out *FieldMappingItem) {
 	if in.ValueMapping != nil {
 		in, out := &in.ValueMapping, &out.ValueMapping
 		*out = new(ValueMapping)
+		(*in).DeepCopyInto(*out)
+	}
+	if in.DefaultIfAbsent != nil {
+		in, out := &in.DefaultIfAbsent, &out.DefaultIfAbsent
+		*out = new(v1.JSON)
 		(*in).DeepCopyInto(*out)
 	}
 }

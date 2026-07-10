@@ -2,6 +2,7 @@ package v1alpha1
 
 import (
 	rtv1 "github.com/krateoplatformops/provider-runtime/apis/common/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -130,6 +131,15 @@ type FieldMappingItem struct {
 	// ValueMapping optionally transforms the value as it crosses the CR<->API boundary.
 	// +optional
 	ValueMapping *ValueMapping `json:"valueMapping,omitempty"`
+	// DefaultIfAbsent, for a response entry (inResponse), supplies the value to inject at the CR-domain
+	// destination when the API omits the source field entirely. This canonicalizes an absent field into a
+	// known default so status population and drift comparison converge — e.g. an API that omits a boolean
+	// object when it is false. It is an arbitrary JSON value (scalar, object or array). Ignored when the
+	// source field is present, and ignored for request-direction entries.
+	// +optional
+	// +kubebuilder:validation:Schemaless
+	// +kubebuilder:pruning:PreserveUnknownFields
+	DefaultIfAbsent *apiextensionsv1.JSON `json:"defaultIfAbsent,omitempty"`
 }
 
 // ValueMapping declares a value transform applied to a FieldMappingItem. Exactly one tier is configured:
