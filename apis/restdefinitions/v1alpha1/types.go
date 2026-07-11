@@ -388,6 +388,8 @@ type QueryParam struct {
 	Value string `json:"value"`
 }
 
+// +kubebuilder:validation:XValidation:rule="!(has(self.createApiRef) && has(self.observeApiRef))",message="createApiRef and observeApiRef are mutually exclusive: observeApiRef reports existence unconditionally and would suppress createApiRef"
+// +kubebuilder:validation:XValidation:rule="!has(self.createApiRef) || self.verbsDescription.exists(v, v.action == 'get' || v.action == 'findby')",message="createApiRef requires a get or findby verb so the controller can verify the create converged (level-based convergence)"
 type Resource struct {
 	// Name: the name of the resource to manage
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="Kind is immutable, you cannot change that once the CRD has been generated"
@@ -412,6 +414,55 @@ type Resource struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="ExcludedSpecFields are immutable, you cannot change them once the CRD has been generated"
 	// +optional
 	ExcludedSpecFields []string `json:"excludedSpecFields,omitempty"`
+	// ObserveApiRef, when set, delegates the OBSERVE of this resource to a Snowplow RESTAction instead of the
+	// get/findby verbs: the rest-dynamic-controller invokes the referenced RESTAction (via snowplow /call,
+	// under its own identity) each reconcile — passing the resource's name/namespace/uid and its identifier
+	// values (not the whole spec) as request extras — and projects the RESTAction's composed .status into
+	// this resource's status (leaving the runtime-managed conditions untouched). It dissolves proxies whose
+	// only job is to compose a multi-call observation (read several sub-resources and shape one status). The
+	// referenced RESTAction is trusted platform configuration. Being reconcile behavior rather than CRD
+	// shape, it is intentionally mutable.
+	// +optional
+	ObserveApiRef *ApiRef `json:"observeApiRef,omitempty"`
+	// CreateApiRef, when set, delegates CREATE of this resource to a Snowplow RESTAction instead of the
+	// create verb: the controller invokes the referenced RESTAction (passing the resource's name/namespace/
+	// uid and its whole spec — the desired state — as request extras) to run the multi-call provisioning
+	// sequence, and projects any composed .status it returns into this resource's status. The RESTAction
+	// MUST be idempotent: the controller does not verify per-call success — it re-invokes create every
+	// reconcile until Observe reports the resource exists (level-based convergence). This therefore REQUIRES
+	// a get or findby verb (the observe that reports non-existence); with neither, the resource is marked
+	// Available after a single unverified invocation. It does NOT compose with observeApiRef, which reports
+	// existence unconditionally and so would suppress the create. Dissolves proxies whose only job is to
+	// chain create calls (e.g. create instance -> attach disk -> start).
+	// +optional
+	CreateApiRef *ApiRef `json:"createApiRef,omitempty"`
+	// DeleteApiRef, when set, delegates DELETE of this resource to a Snowplow RESTAction instead of the
+	// delete verb: on deletion the controller invokes the referenced RESTAction (the teardown sequence) and
+	// holds the finalizer until it succeeds. The RESTAction MUST be idempotent and tolerate an already-gone
+	// sub-resource.
+	// +optional
+	DeleteApiRef *ApiRef `json:"deleteApiRef,omitempty"`
+	// UpdateApiRef, when set, delegates UPDATE of this resource to a Snowplow RESTAction instead of the
+	// update verb: when Observe reports drift the controller invokes the referenced RESTAction (passing the
+	// whole spec — the desired state) to re-apply it. Like create, the RESTAction MUST be idempotent.
+	// +optional
+	UpdateApiRef *ApiRef `json:"updateApiRef,omitempty"`
+}
+
+// ApiRef references a Snowplow RESTAction (templates.krateo.io/v1) that the controller resolves via
+// snowplow's /call endpoint under its own authn identity.
+type ApiRef struct {
+	// Name of the RESTAction to resolve.
+	// +required
+	Name string `json:"name"`
+	// Namespace of the RESTAction.
+	// +required
+	Namespace string `json:"namespace"`
+	// Extras are static key/values merged UNDER the per-instance context (this resource's name, namespace,
+	// uid and spec) that the controller passes to snowplow as request extras; the per-instance context wins
+	// on conflict. Use them to parameterize the RESTAction (e.g. a fixed endpoint or api-version).
+	// +optional
+	Extras *apiextensionsv1.JSON `json:"extras,omitempty"`
 }
 
 // RestDefinitionSpec is the specification of a RestDefinition.
