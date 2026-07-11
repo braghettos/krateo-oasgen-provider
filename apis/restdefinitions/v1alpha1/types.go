@@ -299,6 +299,19 @@ type VerbsDescription struct {
 
 // AsyncConfig declares how a mutating verb's long-running operation is driven to completion.
 type AsyncConfig struct {
+	// Mode selects how the long-running operation is driven:
+	//   - "blocking" (default): the trigger reconcile polls the operation to completion inline (Model A).
+	//     Simplest, but occupies a reconcile worker for the duration of the operation.
+	//   - "requeue": the trigger reconcile fires the operation, records its handle, and returns; each
+	//     subsequent reconcile polls the operation once and requeues until it reaches a terminal status
+	//     (Model B). Non-blocking — it never pins a worker — and adds terminal-failure detection to the
+	//     otherwise blind "wait for the resource to appear" pending flow. Because the operation is triggered
+	//     before its handle is recorded, the trigger must be idempotent (as for blocking mode). requeue
+	//     applies to create/update; delete always polls inline, since the finalizer must be held until the
+	//     delete operation completes.
+	// +kubebuilder:validation:Enum=blocking;requeue
+	// +optional
+	Mode string `json:"mode,omitempty"`
 	// OperationRef: how to extract the operation handle from the trigger response.
 	// +required
 	OperationRef OperationRef `json:"operationRef"`
