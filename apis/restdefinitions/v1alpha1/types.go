@@ -388,6 +388,101 @@ type QueryParam struct {
 	Value string `json:"value"`
 }
 
+// Orchestration declares the multi-call lifecycle plans for a resource. Any subset may be set; a phase with
+// no plan falls back to the single-call verb of the same action. Delete, when omitted, is derived: the
+// completed create steps that declare a deleteCall are torn down in reverse order.
+type Orchestration struct {
+	// Create is the ordered sequence of calls that provisions the resource. When set it replaces the single
+	// create verb.
+	// +optional
+	Create *StepPlan `json:"create,omitempty"`
+}
+
+// StepPlan is an ordered list of named steps executed in declaration order.
+type StepPlan struct {
+	// Steps run in declaration order; each step's captured outputs become available to later steps.
+	// +kubebuilder:validation:MinItems=1
+	Steps []Step `json:"steps"`
+}
+
+// Step is one call in a plan. It reuses the per-verb feature set: at runtime it is lifted into a synthetic
+// verb so the same client, path/query/header resolution, OAS validation, response normalization and async
+// engine run verbatim.
+type Step struct {
+	// Name uniquely identifies the step within its plan and namespaces its published output at
+	// status.orchestration.steps.<name>. Must be a DNS-1123 label.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +required
+	Name string `json:"name"`
+	// Method + Path: the single OpenAPI operation this step calls (the path must be declared in the OAS).
+	// +kubebuilder:validation:Enum=GET;POST;PUT;DELETE;PATCH
+	// +required
+	Method string `json:"method"`
+	// +required
+	Path string `json:"path"`
+	// FieldMapping is the unified request/response mapping for THIS step. Request entries
+	// (inPath/inQuery/inBody) whose inCustomResource points at status.orchestration.steps.<prior>.<field>
+	// are the cross-step data-flow mechanism (a later step consumes an earlier step's captured output);
+	// response entries (inResponse) normalize this step's body before capture.
+	// +optional
+	FieldMapping []FieldMappingItem `json:"fieldMapping,omitempty"`
+	// RequestTransform / ResponseTransform: whole-document jq for this step's request / response body.
+	// +optional
+	RequestTransform *JQProgram `json:"requestTransform,omitempty"`
+	// +optional
+	ResponseTransform *JQProgram `json:"responseTransform,omitempty"`
+	// Capture lists JSONPaths of this step's normalized response to publish under
+	// status.orchestration.steps.<name>, forming the named outputs later steps and deleteCall consume.
+	// Empty => a pure mutation step that publishes nothing.
+	// +optional
+	Capture []string `json:"capture,omitempty"`
+	// DeleteCall is the request issued for this step during reverse-order teardown. Omit when the step
+	// created nothing to tear down, or when a parent step's deletion cascades (e.g. deleting a repo removes
+	// its webhooks). It is a no-op unless the step actually completed.
+	// +optional
+	DeleteCall *StepCall `json:"deleteCall,omitempty"`
+	// SuccessCodes / TolerateCodes / NotFoundCodes: per-step status-code handling. TolerateCodes is the
+	// idempotency lever — tolerate the API's already-exists code so a resumed step is a no-op.
+	// +optional
+	SuccessCodes []int `json:"successCodes,omitempty"`
+	// +optional
+	TolerateCodes []int `json:"tolerateCodes,omitempty"`
+	// +optional
+	NotFoundCodes []int `json:"notFoundCodes,omitempty"`
+	// +optional
+	Headers []HeaderItem `json:"headers,omitempty"`
+	// +optional
+	Queries []QueryParam `json:"queries,omitempty"`
+	// Async declares long-running-operation handling for this step. In the first increment only
+	// mode=blocking is honored (the step polls to completion inline); requeue is reserved for a later one.
+	// +optional
+	Async *AsyncConfig `json:"async,omitempty"`
+}
+
+// StepCall is a single request (method/path plus request-shaping) used by a step's deleteCall for teardown.
+type StepCall struct {
+	// +kubebuilder:validation:Enum=GET;POST;PUT;DELETE;PATCH
+	// +required
+	Method string `json:"method"`
+	// +required
+	Path string `json:"path"`
+	// FieldMapping resolves the teardown call's path/query/body — typically from the step's captured output
+	// (e.g. inPath id <- status.orchestration.steps.repo.id).
+	// +optional
+	FieldMapping []FieldMappingItem `json:"fieldMapping,omitempty"`
+	// TolerateCodes / NotFoundCodes let an already-gone sub-resource be treated as successfully deleted.
+	// +optional
+	SuccessCodes []int `json:"successCodes,omitempty"`
+	// +optional
+	TolerateCodes []int `json:"tolerateCodes,omitempty"`
+	// +optional
+	NotFoundCodes []int `json:"notFoundCodes,omitempty"`
+	// +optional
+	Headers []HeaderItem `json:"headers,omitempty"`
+	// +optional
+	Queries []QueryParam `json:"queries,omitempty"`
+}
+
 type Resource struct {
 	// Name: the name of the resource to manage
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="Kind is immutable, you cannot change that once the CRD has been generated"
@@ -412,6 +507,14 @@ type Resource struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="ExcludedSpecFields are immutable, you cannot change them once the CRD has been generated"
 	// +optional
 	ExcludedSpecFields []string `json:"excludedSpecFields,omitempty"`
+	// Orchestration, when set, realizes the resource's create/delete lifecycle as an ordered SEQUENCE of
+	// idempotent REST calls (steps) instead of the single create/delete verbs — dissolving hand-written
+	// proxies that only exist to chain multiple calls (e.g. create repo -> create webhook -> set branch).
+	// The get/findby verbs in verbsDescription still drive Observe existence and drift on the primary
+	// resource. Nil => single-call behavior, unchanged. Being reconcile behavior rather than CRD shape, it
+	// is intentionally mutable.
+	// +optional
+	Orchestration *Orchestration `json:"orchestration,omitempty"`
 }
 
 // RestDefinitionSpec is the specification of a RestDefinition.

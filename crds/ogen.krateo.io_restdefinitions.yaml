@@ -147,6 +147,660 @@ spec:
                     - message: Kind is immutable, you cannot change that once the
                         CRD has been generated
                       rule: self == oldSelf
+                  orchestration:
+                    description: |-
+                      Orchestration, when set, realizes the resource's create/delete lifecycle as an ordered SEQUENCE of
+                      idempotent REST calls (steps) instead of the single create/delete verbs — dissolving hand-written
+                      proxies that only exist to chain multiple calls (e.g. create repo -> create webhook -> set branch).
+                      The get/findby verbs in verbsDescription still drive Observe existence and drift on the primary
+                      resource. Nil => single-call behavior, unchanged. Being reconcile behavior rather than CRD shape, it
+                      is intentionally mutable.
+                    properties:
+                      create:
+                        description: |-
+                          Create is the ordered sequence of calls that provisions the resource. When set it replaces the single
+                          create verb.
+                        properties:
+                          steps:
+                            description: Steps run in declaration order; each step's
+                              captured outputs become available to later steps.
+                            items:
+                              description: |-
+                                Step is one call in a plan. It reuses the per-verb feature set: at runtime it is lifted into a synthetic
+                                verb so the same client, path/query/header resolution, OAS validation, response normalization and async
+                                engine run verbatim.
+                              properties:
+                                async:
+                                  description: |-
+                                    Async declares long-running-operation handling for this step. In the first increment only
+                                    mode=blocking is honored (the step polls to completion inline); requeue is reserved for a later one.
+                                  properties:
+                                    mode:
+                                      description: |-
+                                        Mode selects how the long-running operation is driven:
+                                          - "blocking" (default): the trigger reconcile polls the operation to completion inline (Model A).
+                                            Simplest, but occupies a reconcile worker for the duration of the operation.
+                                          - "requeue": the trigger reconcile fires the operation, records its handle, and returns; each
+                                            subsequent reconcile polls the operation once and requeues until it reaches a terminal status
+                                            (Model B). Non-blocking — it never pins a worker — and adds terminal-failure detection to the
+                                            otherwise blind "wait for the resource to appear" pending flow. Because the operation is triggered
+                                            before its handle is recorded, the trigger must be idempotent (as for blocking mode). requeue
+                                            applies to create/update; delete always polls inline, since the finalizer must be held until the
+                                            delete operation completes.
+                                      enum:
+                                      - blocking
+                                      - requeue
+                                      type: string
+                                    operationRef:
+                                      description: 'OperationRef: how to extract the
+                                        operation handle from the trigger response.'
+                                      properties:
+                                        in:
+                                          description: 'In: where the handle is located:
+                                            "body" (a JSONPath into the trigger response
+                                            body) or "header".'
+                                          enum:
+                                          - body
+                                          - header
+                                          type: string
+                                        jq:
+                                          description: 'JQ: optional gojq program
+                                            to derive the handle from the raw value
+                                            at Path (e.g. an id from a URL).'
+                                          properties:
+                                            entrypoint:
+                                              description: |-
+                                                Entrypoint is the jq function defined in the referenced module to invoke, e.g. "normalize".
+                                                If empty, the whole module body is executed as the program. Only meaningful together with ref.
+                                              type: string
+                                            inline:
+                                              description: Inline is a gojq source
+                                                literal. Best for short, single-use
+                                                expressions.
+                                              type: string
+                                            ref:
+                                              description: |-
+                                                Ref references a self-contained .jq module asset, using the SAME URI scheme as spec.oasPath:
+                                                  configmap://<namespace>/<name>/<key>   |   http(s)://<url>
+                                              pattern: ^(configmap:\/\/([a-z0-9-]+)\/([a-z0-9-]+)\/([a-zA-Z0-9.-_]+)|https?:\/\/\S+)$
+                                              type: string
+                                          type: object
+                                          x-kubernetes-validations:
+                                          - message: exactly one of inline or ref
+                                              must be set
+                                            rule: has(self.inline) != has(self.ref)
+                                          - message: entrypoint is only valid together
+                                              with ref
+                                            rule: '!has(self.entrypoint) || has(self.ref)'
+                                        path:
+                                          description: 'Path: the JSONPath (for in=body)
+                                            or header name (for in=header) that carries
+                                            the handle.'
+                                          type: string
+                                      required:
+                                      - in
+                                      - path
+                                      type: object
+                                    poll:
+                                      description: 'Poll: the polling endpoint and
+                                        its terminal semantics.'
+                                      properties:
+                                        failureValues:
+                                          description: 'FailureValues: status values
+                                            that mark terminal failure.'
+                                          items:
+                                            type: string
+                                          type: array
+                                        intervalSeconds:
+                                          description: 'IntervalSeconds: delay between
+                                            polls. Defaults to 1.'
+                                          type: integer
+                                        maxAttempts:
+                                          description: 'MaxAttempts: maximum number
+                                            of poll attempts. Defaults to 10.'
+                                          type: integer
+                                        method:
+                                          description: 'Method: the HTTP method for
+                                            the poll call (GET in practice).'
+                                          enum:
+                                          - GET
+                                          type: string
+                                        path:
+                                          description: |-
+                                            Path: the poll endpoint template; the token {operationId} is bound from the extracted handle. The path
+                                            must be declared in the OAS document.
+                                          type: string
+                                        statusPath:
+                                          description: 'StatusPath: JSONPath to the
+                                            status field in the poll response.'
+                                          type: string
+                                        successValues:
+                                          description: 'SuccessValues: status values
+                                            that mark terminal success.'
+                                          items:
+                                            type: string
+                                          minItems: 1
+                                          type: array
+                                        timeoutSeconds:
+                                          description: 'TimeoutSeconds: overall cap
+                                            on the polling loop. 0 means no explicit
+                                            cap (bounded by MaxAttempts).'
+                                          type: integer
+                                      required:
+                                      - path
+                                      - statusPath
+                                      - successValues
+                                      type: object
+                                    postGet:
+                                      description: 'PostGet: after terminal success,
+                                        re-run the resource''s get/findby to fetch
+                                        the final state.'
+                                      type: boolean
+                                  required:
+                                  - operationRef
+                                  - poll
+                                  type: object
+                                capture:
+                                  description: |-
+                                    Capture lists JSONPaths of this step's normalized response to publish under
+                                    status.orchestration.steps.<name>, forming the named outputs later steps and deleteCall consume.
+                                    Empty => a pure mutation step that publishes nothing.
+                                  items:
+                                    type: string
+                                  type: array
+                                deleteCall:
+                                  description: |-
+                                    DeleteCall is the request issued for this step during reverse-order teardown. Omit when the step
+                                    created nothing to tear down, or when a parent step's deletion cascades (e.g. deleting a repo removes
+                                    its webhooks). It is a no-op unless the step actually completed.
+                                  properties:
+                                    fieldMapping:
+                                      description: |-
+                                        FieldMapping resolves the teardown call's path/query/body — typically from the step's captured output
+                                        (e.g. inPath id <- status.orchestration.steps.repo.id).
+                                      items:
+                                        description: |-
+                                          FieldMappingItem defines a single unified mapping entry: it relocates a value between the Custom
+                                          Resource and the external API (request OR response direction) and optionally transforms the value as
+                                          it crosses that boundary. It generalizes RequestFieldMappingItem (which is retained, deprecated, for
+                                          backward compatibility): the request anchors inPath/inQuery/inBody keep their existing meaning, and a
+                                          new inResponse anchor selects a field of the API response body to be normalized into the CR-facing
+                                          shape before status population and drift comparison.
+
+                                          Exactly one API-side anchor must be set. The anchor kind implies the direction:
+                                          inPath/inQuery/inBody => request, inResponse => response.
+                                        properties:
+                                          defaultIfAbsent:
+                                            description: |-
+                                              DefaultIfAbsent, for a response entry (inResponse), supplies the value to inject at the CR-domain
+                                              destination when the API omits the source field entirely. This canonicalizes an absent field into a
+                                              known default so status population and drift comparison converge — e.g. an API that omits a boolean
+                                              object when it is false. It is an arbitrary JSON value (scalar, object or array). Ignored when the
+                                              source field is present, and ignored for request-direction entries.
+                                            x-kubernetes-preserve-unknown-fields: true
+                                          inBody:
+                                            description: |-
+                                              InBody selects a REQUEST body field (request direction).
+                                              Only one of 'inPath', 'inQuery', 'inBody' or 'inResponse' can be set.
+                                            type: string
+                                          inCustomResource:
+                                            description: |-
+                                              InCustomResource is the JSONPath to the field within the Custom Resource, e.g. 'spec.permission' or
+                                              'status.metadata.id'. For request entries it is the SOURCE of the value; for response entries it is
+                                              the CR-domain DESTINATION whose leaf name and parent path determine where the value lands.
+                                            type: string
+                                          inPath:
+                                            description: |-
+                                              InPath selects a REQUEST path parameter (request direction).
+                                              Only one of 'inPath', 'inQuery', 'inBody' or 'inResponse' can be set.
+                                            type: string
+                                          inQuery:
+                                            description: |-
+                                              InQuery selects a REQUEST query parameter (request direction).
+                                              Only one of 'inPath', 'inQuery', 'inBody' or 'inResponse' can be set.
+                                            type: string
+                                          inResponse:
+                                            description: |-
+                                              InResponse selects a RESPONSE body field by JSONPath (response direction).
+                                              The value found here is transformed (if valueMapping is set) and relocated to the CR-domain
+                                              destination given by inCustomResource, so that status population and drift comparison operate on the
+                                              CR-domain shape.
+                                              Only one of 'inPath', 'inQuery', 'inBody' or 'inResponse' can be set.
+                                            type: string
+                                          valueMapping:
+                                            description: ValueMapping optionally transforms
+                                              the value as it crosses the CR<->API
+                                              boundary.
+                                            properties:
+                                              aliases:
+                                                description: |-
+                                                  Aliases is an explicit set of bidirectional CR<->API value pairs (used when type is 'alias').
+                                                  On the request the CR value is rewritten to its apiValue; on the response the apiValue is rewritten
+                                                  back to the CR value; any value without a matching pair passes through unchanged.
+                                                items:
+                                                  description: 'ValueAlias is a single
+                                                    bidirectional CR<->API value pair,
+                                                    e.g. {customResourceValue: read,
+                                                    apiValue: pull}.'
+                                                  properties:
+                                                    apiValue:
+                                                      description: APIValue is the
+                                                        corresponding value as expressed
+                                                        by the external API (API domain).
+                                                      type: string
+                                                    customResourceValue:
+                                                      description: CustomResourceValue
+                                                        is the value as expressed
+                                                        in the Custom Resource (CR
+                                                        domain).
+                                                      type: string
+                                                  required:
+                                                  - apiValue
+                                                  - customResourceValue
+                                                  type: object
+                                                type: array
+                                              jq:
+                                                description: |-
+                                                  JQ is a gojq program (used when type is 'jq'), supplied inline or as a referenced .jq module.
+                                                  The program is one-directional: for a round-tripping field, write the inverse program in the
+                                                  opposite-direction entry.
+                                                properties:
+                                                  entrypoint:
+                                                    description: |-
+                                                      Entrypoint is the jq function defined in the referenced module to invoke, e.g. "normalize".
+                                                      If empty, the whole module body is executed as the program. Only meaningful together with ref.
+                                                    type: string
+                                                  inline:
+                                                    description: Inline is a gojq
+                                                      source literal. Best for short,
+                                                      single-use expressions.
+                                                    type: string
+                                                  ref:
+                                                    description: |-
+                                                      Ref references a self-contained .jq module asset, using the SAME URI scheme as spec.oasPath:
+                                                        configmap://<namespace>/<name>/<key>   |   http(s)://<url>
+                                                    pattern: ^(configmap:\/\/([a-z0-9-]+)\/([a-z0-9-]+)\/([a-zA-Z0-9.-_]+)|https?:\/\/\S+)$
+                                                    type: string
+                                                type: object
+                                                x-kubernetes-validations:
+                                                - message: exactly one of inline or
+                                                    ref must be set
+                                                  rule: has(self.inline) != has(self.ref)
+                                                - message: entrypoint is only valid
+                                                    together with ref
+                                                  rule: '!has(self.entrypoint) ||
+                                                    has(self.ref)'
+                                              type:
+                                                description: Type selects the transform
+                                                  tier.
+                                                enum:
+                                                - alias
+                                                - jq
+                                                type: string
+                                            required:
+                                            - type
+                                            type: object
+                                            x-kubernetes-validations:
+                                            - message: aliases must be set when type
+                                                is 'alias'
+                                              rule: 'self.type == ''alias'' ? has(self.aliases)
+                                                : true'
+                                            - message: jq must be set when type is
+                                                'jq'
+                                              rule: 'self.type == ''jq'' ? has(self.jq)
+                                                : true'
+                                        type: object
+                                        x-kubernetes-validations:
+                                        - message: exactly one of inPath, inQuery,
+                                            inBody or inResponse must be set
+                                          rule: (has(self.inPath)?1:0)+(has(self.inQuery)?1:0)+(has(self.inBody)?1:0)+(has(self.inResponse)?1:0)
+                                            == 1
+                                      type: array
+                                    headers:
+                                      items:
+                                        description: HeaderItem is a single static
+                                          HTTP header injected on every request for
+                                          a verb.
+                                        properties:
+                                          name:
+                                            description: Name is the HTTP header name,
+                                              e.g. 'Accept' or 'Content-Type'.
+                                            type: string
+                                          value:
+                                            description: Value is the HTTP header
+                                              value, sent verbatim.
+                                            type: string
+                                        required:
+                                        - name
+                                        - value
+                                        type: object
+                                      type: array
+                                    method:
+                                      enum:
+                                      - GET
+                                      - POST
+                                      - PUT
+                                      - DELETE
+                                      - PATCH
+                                      type: string
+                                    notFoundCodes:
+                                      items:
+                                        type: integer
+                                      type: array
+                                    path:
+                                      type: string
+                                    queries:
+                                      items:
+                                        description: QueryParam is a single static
+                                          query parameter injected on every request
+                                          for a verb.
+                                        properties:
+                                          name:
+                                            description: Name is the query parameter
+                                              name, e.g. 'api-version'.
+                                            type: string
+                                          value:
+                                            description: Value is the query parameter
+                                              value, sent verbatim.
+                                            type: string
+                                        required:
+                                        - name
+                                        - value
+                                        type: object
+                                      type: array
+                                    successCodes:
+                                      description: TolerateCodes / NotFoundCodes let
+                                        an already-gone sub-resource be treated as
+                                        successfully deleted.
+                                      items:
+                                        type: integer
+                                      type: array
+                                    tolerateCodes:
+                                      items:
+                                        type: integer
+                                      type: array
+                                  required:
+                                  - method
+                                  - path
+                                  type: object
+                                fieldMapping:
+                                  description: |-
+                                    FieldMapping is the unified request/response mapping for THIS step. Request entries
+                                    (inPath/inQuery/inBody) whose inCustomResource points at status.orchestration.steps.<prior>.<field>
+                                    are the cross-step data-flow mechanism (a later step consumes an earlier step's captured output);
+                                    response entries (inResponse) normalize this step's body before capture.
+                                  items:
+                                    description: |-
+                                      FieldMappingItem defines a single unified mapping entry: it relocates a value between the Custom
+                                      Resource and the external API (request OR response direction) and optionally transforms the value as
+                                      it crosses that boundary. It generalizes RequestFieldMappingItem (which is retained, deprecated, for
+                                      backward compatibility): the request anchors inPath/inQuery/inBody keep their existing meaning, and a
+                                      new inResponse anchor selects a field of the API response body to be normalized into the CR-facing
+                                      shape before status population and drift comparison.
+
+                                      Exactly one API-side anchor must be set. The anchor kind implies the direction:
+                                      inPath/inQuery/inBody => request, inResponse => response.
+                                    properties:
+                                      defaultIfAbsent:
+                                        description: |-
+                                          DefaultIfAbsent, for a response entry (inResponse), supplies the value to inject at the CR-domain
+                                          destination when the API omits the source field entirely. This canonicalizes an absent field into a
+                                          known default so status population and drift comparison converge — e.g. an API that omits a boolean
+                                          object when it is false. It is an arbitrary JSON value (scalar, object or array). Ignored when the
+                                          source field is present, and ignored for request-direction entries.
+                                        x-kubernetes-preserve-unknown-fields: true
+                                      inBody:
+                                        description: |-
+                                          InBody selects a REQUEST body field (request direction).
+                                          Only one of 'inPath', 'inQuery', 'inBody' or 'inResponse' can be set.
+                                        type: string
+                                      inCustomResource:
+                                        description: |-
+                                          InCustomResource is the JSONPath to the field within the Custom Resource, e.g. 'spec.permission' or
+                                          'status.metadata.id'. For request entries it is the SOURCE of the value; for response entries it is
+                                          the CR-domain DESTINATION whose leaf name and parent path determine where the value lands.
+                                        type: string
+                                      inPath:
+                                        description: |-
+                                          InPath selects a REQUEST path parameter (request direction).
+                                          Only one of 'inPath', 'inQuery', 'inBody' or 'inResponse' can be set.
+                                        type: string
+                                      inQuery:
+                                        description: |-
+                                          InQuery selects a REQUEST query parameter (request direction).
+                                          Only one of 'inPath', 'inQuery', 'inBody' or 'inResponse' can be set.
+                                        type: string
+                                      inResponse:
+                                        description: |-
+                                          InResponse selects a RESPONSE body field by JSONPath (response direction).
+                                          The value found here is transformed (if valueMapping is set) and relocated to the CR-domain
+                                          destination given by inCustomResource, so that status population and drift comparison operate on the
+                                          CR-domain shape.
+                                          Only one of 'inPath', 'inQuery', 'inBody' or 'inResponse' can be set.
+                                        type: string
+                                      valueMapping:
+                                        description: ValueMapping optionally transforms
+                                          the value as it crosses the CR<->API boundary.
+                                        properties:
+                                          aliases:
+                                            description: |-
+                                              Aliases is an explicit set of bidirectional CR<->API value pairs (used when type is 'alias').
+                                              On the request the CR value is rewritten to its apiValue; on the response the apiValue is rewritten
+                                              back to the CR value; any value without a matching pair passes through unchanged.
+                                            items:
+                                              description: 'ValueAlias is a single
+                                                bidirectional CR<->API value pair,
+                                                e.g. {customResourceValue: read, apiValue:
+                                                pull}.'
+                                              properties:
+                                                apiValue:
+                                                  description: APIValue is the corresponding
+                                                    value as expressed by the external
+                                                    API (API domain).
+                                                  type: string
+                                                customResourceValue:
+                                                  description: CustomResourceValue
+                                                    is the value as expressed in the
+                                                    Custom Resource (CR domain).
+                                                  type: string
+                                              required:
+                                              - apiValue
+                                              - customResourceValue
+                                              type: object
+                                            type: array
+                                          jq:
+                                            description: |-
+                                              JQ is a gojq program (used when type is 'jq'), supplied inline or as a referenced .jq module.
+                                              The program is one-directional: for a round-tripping field, write the inverse program in the
+                                              opposite-direction entry.
+                                            properties:
+                                              entrypoint:
+                                                description: |-
+                                                  Entrypoint is the jq function defined in the referenced module to invoke, e.g. "normalize".
+                                                  If empty, the whole module body is executed as the program. Only meaningful together with ref.
+                                                type: string
+                                              inline:
+                                                description: Inline is a gojq source
+                                                  literal. Best for short, single-use
+                                                  expressions.
+                                                type: string
+                                              ref:
+                                                description: |-
+                                                  Ref references a self-contained .jq module asset, using the SAME URI scheme as spec.oasPath:
+                                                    configmap://<namespace>/<name>/<key>   |   http(s)://<url>
+                                                pattern: ^(configmap:\/\/([a-z0-9-]+)\/([a-z0-9-]+)\/([a-zA-Z0-9.-_]+)|https?:\/\/\S+)$
+                                                type: string
+                                            type: object
+                                            x-kubernetes-validations:
+                                            - message: exactly one of inline or ref
+                                                must be set
+                                              rule: has(self.inline) != has(self.ref)
+                                            - message: entrypoint is only valid together
+                                                with ref
+                                              rule: '!has(self.entrypoint) || has(self.ref)'
+                                          type:
+                                            description: Type selects the transform
+                                              tier.
+                                            enum:
+                                            - alias
+                                            - jq
+                                            type: string
+                                        required:
+                                        - type
+                                        type: object
+                                        x-kubernetes-validations:
+                                        - message: aliases must be set when type is
+                                            'alias'
+                                          rule: 'self.type == ''alias'' ? has(self.aliases)
+                                            : true'
+                                        - message: jq must be set when type is 'jq'
+                                          rule: 'self.type == ''jq'' ? has(self.jq)
+                                            : true'
+                                    type: object
+                                    x-kubernetes-validations:
+                                    - message: exactly one of inPath, inQuery, inBody
+                                        or inResponse must be set
+                                      rule: (has(self.inPath)?1:0)+(has(self.inQuery)?1:0)+(has(self.inBody)?1:0)+(has(self.inResponse)?1:0)
+                                        == 1
+                                  type: array
+                                headers:
+                                  items:
+                                    description: HeaderItem is a single static HTTP
+                                      header injected on every request for a verb.
+                                    properties:
+                                      name:
+                                        description: Name is the HTTP header name,
+                                          e.g. 'Accept' or 'Content-Type'.
+                                        type: string
+                                      value:
+                                        description: Value is the HTTP header value,
+                                          sent verbatim.
+                                        type: string
+                                    required:
+                                    - name
+                                    - value
+                                    type: object
+                                  type: array
+                                method:
+                                  description: 'Method + Path: the single OpenAPI
+                                    operation this step calls (the path must be declared
+                                    in the OAS).'
+                                  enum:
+                                  - GET
+                                  - POST
+                                  - PUT
+                                  - DELETE
+                                  - PATCH
+                                  type: string
+                                name:
+                                  description: |-
+                                    Name uniquely identifies the step within its plan and namespaces its published output at
+                                    status.orchestration.steps.<name>. Must be a DNS-1123 label.
+                                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                  type: string
+                                notFoundCodes:
+                                  items:
+                                    type: integer
+                                  type: array
+                                path:
+                                  type: string
+                                queries:
+                                  items:
+                                    description: QueryParam is a single static query
+                                      parameter injected on every request for a verb.
+                                    properties:
+                                      name:
+                                        description: Name is the query parameter name,
+                                          e.g. 'api-version'.
+                                        type: string
+                                      value:
+                                        description: Value is the query parameter
+                                          value, sent verbatim.
+                                        type: string
+                                    required:
+                                    - name
+                                    - value
+                                    type: object
+                                  type: array
+                                requestTransform:
+                                  description: 'RequestTransform / ResponseTransform:
+                                    whole-document jq for this step''s request / response
+                                    body.'
+                                  properties:
+                                    entrypoint:
+                                      description: |-
+                                        Entrypoint is the jq function defined in the referenced module to invoke, e.g. "normalize".
+                                        If empty, the whole module body is executed as the program. Only meaningful together with ref.
+                                      type: string
+                                    inline:
+                                      description: Inline is a gojq source literal.
+                                        Best for short, single-use expressions.
+                                      type: string
+                                    ref:
+                                      description: |-
+                                        Ref references a self-contained .jq module asset, using the SAME URI scheme as spec.oasPath:
+                                          configmap://<namespace>/<name>/<key>   |   http(s)://<url>
+                                      pattern: ^(configmap:\/\/([a-z0-9-]+)\/([a-z0-9-]+)\/([a-zA-Z0-9.-_]+)|https?:\/\/\S+)$
+                                      type: string
+                                  type: object
+                                  x-kubernetes-validations:
+                                  - message: exactly one of inline or ref must be
+                                      set
+                                    rule: has(self.inline) != has(self.ref)
+                                  - message: entrypoint is only valid together with
+                                      ref
+                                    rule: '!has(self.entrypoint) || has(self.ref)'
+                                responseTransform:
+                                  description: |-
+                                    JQProgram is a gojq program supplied EITHER inline OR as a reference to a self-contained .jq module
+                                    asset. Exactly one of Inline or Ref is set. It is the single type used everywhere jq is accepted:
+                                    per-field (ValueMapping.JQ) and document-level (VerbsDescription.RequestTransform/ResponseTransform).
+                                  properties:
+                                    entrypoint:
+                                      description: |-
+                                        Entrypoint is the jq function defined in the referenced module to invoke, e.g. "normalize".
+                                        If empty, the whole module body is executed as the program. Only meaningful together with ref.
+                                      type: string
+                                    inline:
+                                      description: Inline is a gojq source literal.
+                                        Best for short, single-use expressions.
+                                      type: string
+                                    ref:
+                                      description: |-
+                                        Ref references a self-contained .jq module asset, using the SAME URI scheme as spec.oasPath:
+                                          configmap://<namespace>/<name>/<key>   |   http(s)://<url>
+                                      pattern: ^(configmap:\/\/([a-z0-9-]+)\/([a-z0-9-]+)\/([a-zA-Z0-9.-_]+)|https?:\/\/\S+)$
+                                      type: string
+                                  type: object
+                                  x-kubernetes-validations:
+                                  - message: exactly one of inline or ref must be
+                                      set
+                                    rule: has(self.inline) != has(self.ref)
+                                  - message: entrypoint is only valid together with
+                                      ref
+                                    rule: '!has(self.entrypoint) || has(self.ref)'
+                                successCodes:
+                                  description: |-
+                                    SuccessCodes / TolerateCodes / NotFoundCodes: per-step status-code handling. TolerateCodes is the
+                                    idempotency lever — tolerate the API's already-exists code so a resumed step is a no-op.
+                                  items:
+                                    type: integer
+                                  type: array
+                                tolerateCodes:
+                                  items:
+                                    type: integer
+                                  type: array
+                              required:
+                              - method
+                              - name
+                              - path
+                              type: object
+                            minItems: 1
+                            type: array
+                        required:
+                        - steps
+                        type: object
+                    type: object
                   verbsDescription:
                     description: 'VerbsDescription: the list of verbs to use on this
                       resource'
