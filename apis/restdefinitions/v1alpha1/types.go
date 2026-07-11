@@ -388,6 +388,8 @@ type QueryParam struct {
 	Value string `json:"value"`
 }
 
+// +kubebuilder:validation:XValidation:rule="!(has(self.createApiRef) && has(self.observeApiRef))",message="createApiRef and observeApiRef are mutually exclusive: observeApiRef reports existence unconditionally and would suppress createApiRef"
+// +kubebuilder:validation:XValidation:rule="!has(self.createApiRef) || self.verbsDescription.exists(v, v.action == 'get' || v.action == 'findby')",message="createApiRef requires a get or findby verb so the controller can verify the create converged (level-based convergence)"
 type Resource struct {
 	// Name: the name of the resource to manage
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="Kind is immutable, you cannot change that once the CRD has been generated"
@@ -440,6 +442,11 @@ type Resource struct {
 	// sub-resource.
 	// +optional
 	DeleteApiRef *ApiRef `json:"deleteApiRef,omitempty"`
+	// UpdateApiRef, when set, delegates UPDATE of this resource to a Snowplow RESTAction instead of the
+	// update verb: when Observe reports drift the controller invokes the referenced RESTAction (passing the
+	// whole spec — the desired state) to re-apply it. Like create, the RESTAction MUST be idempotent.
+	// +optional
+	UpdateApiRef *ApiRef `json:"updateApiRef,omitempty"`
 }
 
 // ApiRef references a Snowplow RESTAction (templates.krateo.io/v1) that the controller resolves via
