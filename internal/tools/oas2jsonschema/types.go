@@ -37,6 +37,10 @@ type ResourceConfig struct {
 	AdditionalStatusFields []string
 	ConfigurationFields    []ConfigurationField
 	ExcludedSpecFields     []string
+	// HasOrchestration indicates the resource declares an orchestration step plan, so the generated status
+	// schema must carry an open (preserve-unknown) `orchestration` subtree for the runtime's durable
+	// per-step cursor and captured outputs.
+	HasOrchestration bool
 }
 
 type ConfigurationField struct {

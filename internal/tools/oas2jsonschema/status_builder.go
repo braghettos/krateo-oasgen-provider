@@ -13,25 +13,41 @@ import (
 func (g *OASSchemaGenerator) BuildStatusSchema() ([]byte, []error, error) {
 	var warnings []error
 
+	hasOrchestration := g.resourceConfig != nil && g.resourceConfig.HasOrchestration
 	allStatusFields := append(g.resourceConfig.Identifiers, g.resourceConfig.AdditionalStatusFields...)
-	if len(allStatusFields) == 0 {
+	if len(allStatusFields) == 0 && !hasOrchestration {
 		return nil, []error{SchemaGenerationError{Code: CodeNoStatusSchema, Message: "no identifiers or additional status fields defined, skipping status schema generation"}}, nil
 	}
 
-	responseSchema, err := g.getBaseSchemaForStatus()
-	if err != nil {
-		warnings = append(warnings, SchemaGenerationError{Message: fmt.Sprintf("schema validation warning: %v", err)})
-	}
-	if responseSchema == nil {
-		warnings = append(warnings, SchemaGenerationError{Code: CodeNoStatusSchema, Message: "could not find a GET or FINDBY response schema for status generation"})
+	var statusSchema *Schema
+	if len(allStatusFields) > 0 {
+		responseSchema, err := g.getBaseSchemaForStatus()
+		if err != nil {
+			warnings = append(warnings, SchemaGenerationError{Message: fmt.Sprintf("schema validation warning: %v", err)})
+		}
+		if responseSchema == nil {
+			warnings = append(warnings, SchemaGenerationError{Code: CodeNoStatusSchema, Message: "could not find a GET or FINDBY response schema for status generation"})
+		}
+
+		if err := prepareSchemaForCRD(responseSchema, g.generatorConfig); err != nil {
+			return nil, warnings, fmt.Errorf("could not prepare status schema for CRD: %w", err)
+		}
+
+		var buildWarnings []error
+		statusSchema, buildWarnings = g.composeStatusSchema(allStatusFields, responseSchema)
+		warnings = append(warnings, buildWarnings...)
+	} else {
+		// Orchestration-only resource: no identifier/status fields to resolve from a response schema, but a
+		// status subresource is still needed to carry the orchestration cursor.
+		statusSchema = &Schema{Type: []string{"object"}, Properties: []Property{}}
 	}
 
-	if err := prepareSchemaForCRD(responseSchema, g.generatorConfig); err != nil {
-		return nil, warnings, fmt.Errorf("could not prepare status schema for CRD: %w", err)
+	// The orchestration runtime persists a durable per-step cursor and operator-defined captured outputs
+	// under status.orchestration; inject it as an open (preserve-unknown) subtree so the structural status
+	// schema does not prune it.
+	if hasOrchestration {
+		g.addOrchestrationStatus(statusSchema)
 	}
-
-	statusSchema, buildWarnings := g.composeStatusSchema(allStatusFields, responseSchema)
-	warnings = append(warnings, buildWarnings...)
 
 	byteSchema, err := GenerateJsonSchema(statusSchema, g.generatorConfig)
 	if err != nil {
@@ -39,6 +55,28 @@ func (g *OASSchemaGenerator) BuildStatusSchema() ([]byte, []error, error) {
 	}
 
 	return byteSchema, warnings, nil
+}
+
+// addOrchestrationStatus injects an open (x-kubernetes-preserve-unknown-fields) `orchestration` object into
+// the status schema. The runtime writes status.orchestration.steps.<name>.{done, <captured outputs>}; the
+// captured outputs are operator-defined, so the subtree is intentionally schemaless.
+func (g *OASSchemaGenerator) addOrchestrationStatus(statusSchema *Schema) {
+	if statusSchema == nil {
+		return
+	}
+	for _, p := range statusSchema.Properties {
+		if p.Name == "orchestration" {
+			return
+		}
+	}
+	statusSchema.Properties = append(statusSchema.Properties, Property{
+		Name: "orchestration",
+		Schema: &Schema{
+			Type:        []string{"object"},
+			Description: "Runtime orchestration state (durable per-step cursor and captured step outputs); managed by the controller.",
+			Extensions:  map[string]interface{}{"x-kubernetes-preserve-unknown-fields": true},
+		},
+	})
 }
 
 // composeStatusSchema builds the status schema by finding nested fields in the response schema

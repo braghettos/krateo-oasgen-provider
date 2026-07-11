@@ -427,6 +427,7 @@ func (e *external) Create(ctx context.Context, mg resource.Managed) (err error) 
 			AdditionalStatusFields: cr.Spec.Resource.AdditionalStatusFields,
 			ConfigurationFields:    configurationFields,
 			ExcludedSpecFields:     cr.Spec.Resource.ExcludedSpecFields,
+			HasOrchestration:       cr.Spec.Resource.Orchestration != nil,
 		}
 
 		// Create the OAS schema generator
