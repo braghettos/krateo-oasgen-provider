@@ -453,6 +453,41 @@ spec:
                           - DELETE
                           - PATCH
                           type: string
+                        notFoundBody:
+                          description: |-
+                            NotFoundBody is the body-based counterpart of NotFoundCodes: a gojq predicate evaluated against the
+                            successful (2xx) observe-response. When it yields true the external resource is treated as NOT
+                            existing, so the reconciler creates it. Use it for APIs that signal absence with a 200 body rather
+                            than a status code. The program must return a boolean, and its input '.' is the RAW body, whose shape
+                            differs by verb:
+                              - get:    the whole GET body — e.g. `.items | length == 0`, `.deleted == true`, `.status == "NOT_FOUND"`.
+                              - findby: the SINGLE matched item (a findby no-match already yields not-found on its own), so write
+                                        it against the item — e.g. a tombstone `.status == "deleted"`; a list-shaped predicate is
+                                        meaningless here.
+                            Intended for get/findby only. It is not evaluated while the resource is Pending (mid async create), and
+                            a non-boolean result is a reconcile error.
+                          properties:
+                            entrypoint:
+                              description: |-
+                                Entrypoint is the jq function defined in the referenced module to invoke, e.g. "normalize".
+                                If empty, the whole module body is executed as the program. Only meaningful together with ref.
+                              type: string
+                            inline:
+                              description: Inline is a gojq source literal. Best for
+                                short, single-use expressions.
+                              type: string
+                            ref:
+                              description: |-
+                                Ref references a self-contained .jq module asset, using the SAME URI scheme as spec.oasPath:
+                                  configmap://<namespace>/<name>/<key>   |   http(s)://<url>
+                              pattern: ^(configmap:\/\/([a-z0-9-]+)\/([a-z0-9-]+)\/([a-zA-Z0-9.-_]+)|https?:\/\/\S+)$
+                              type: string
+                          type: object
+                          x-kubernetes-validations:
+                          - message: exactly one of inline or ref must be set
+                            rule: has(self.inline) != has(self.ref)
+                          - message: entrypoint is only valid together with ref
+                            rule: '!has(self.entrypoint) || has(self.ref)'
                         notFoundCodes:
                           description: |-
                             NotFoundCodes lists HTTP status codes that, for this verb, mean the external resource does NOT exist

@@ -543,6 +543,11 @@ func (in *VerbsDescription) DeepCopyInto(out *VerbsDescription) {
 		*out = make([]int, len(*in))
 		copy(*out, *in)
 	}
+	if in.NotFoundBody != nil {
+		in, out := &in.NotFoundBody, &out.NotFoundBody
+		*out = new(JQProgram)
+		**out = **in
+	}
 	if in.Async != nil {
 		in, out := &in.Async, &out.Async
 		*out = new(AsyncConfig)
