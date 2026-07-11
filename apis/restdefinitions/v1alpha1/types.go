@@ -412,6 +412,32 @@ type Resource struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="ExcludedSpecFields are immutable, you cannot change them once the CRD has been generated"
 	// +optional
 	ExcludedSpecFields []string `json:"excludedSpecFields,omitempty"`
+	// ObserveApiRef, when set, delegates the OBSERVE of this resource to a Snowplow RESTAction instead of the
+	// get/findby verbs: the rest-dynamic-controller invokes the referenced RESTAction (via snowplow /call,
+	// under its own identity) each reconcile — passing the resource's name/namespace/uid and its identifier
+	// values (not the whole spec) as request extras — and projects the RESTAction's composed .status into
+	// this resource's status (leaving the runtime-managed conditions untouched). It dissolves proxies whose
+	// only job is to compose a multi-call observation (read several sub-resources and shape one status). The
+	// referenced RESTAction is trusted platform configuration. Being reconcile behavior rather than CRD
+	// shape, it is intentionally mutable.
+	// +optional
+	ObserveApiRef *ApiRef `json:"observeApiRef,omitempty"`
+}
+
+// ApiRef references a Snowplow RESTAction (templates.krateo.io/v1) that the controller resolves via
+// snowplow's /call endpoint under its own authn identity.
+type ApiRef struct {
+	// Name of the RESTAction to resolve.
+	// +required
+	Name string `json:"name"`
+	// Namespace of the RESTAction.
+	// +required
+	Namespace string `json:"namespace"`
+	// Extras are static key/values merged UNDER the per-instance context (this resource's name, namespace,
+	// uid and spec) that the controller passes to snowplow as request extras; the per-instance context wins
+	// on conflict. Use them to parameterize the RESTAction (e.g. a fixed endpoint or api-version).
+	// +optional
+	Extras *apiextensionsv1.JSON `json:"extras,omitempty"`
 }
 
 // RestDefinitionSpec is the specification of a RestDefinition.

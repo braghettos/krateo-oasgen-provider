@@ -147,6 +147,33 @@ spec:
                     - message: Kind is immutable, you cannot change that once the
                         CRD has been generated
                       rule: self == oldSelf
+                  observeApiRef:
+                    description: |-
+                      ObserveApiRef, when set, delegates the OBSERVE of this resource to a Snowplow RESTAction instead of the
+                      get/findby verbs: the rest-dynamic-controller invokes the referenced RESTAction (via snowplow /call,
+                      under its own identity) each reconcile — passing the resource's name/namespace/uid and its identifier
+                      values (not the whole spec) as request extras — and projects the RESTAction's composed .status into
+                      this resource's status (leaving the runtime-managed conditions untouched). It dissolves proxies whose
+                      only job is to compose a multi-call observation (read several sub-resources and shape one status). The
+                      referenced RESTAction is trusted platform configuration. Being reconcile behavior rather than CRD
+                      shape, it is intentionally mutable.
+                    properties:
+                      extras:
+                        description: |-
+                          Extras are static key/values merged UNDER the per-instance context (this resource's name, namespace,
+                          uid and spec) that the controller passes to snowplow as request extras; the per-instance context wins
+                          on conflict. Use them to parameterize the RESTAction (e.g. a fixed endpoint or api-version).
+                        x-kubernetes-preserve-unknown-fields: true
+                      name:
+                        description: Name of the RESTAction to resolve.
+                        type: string
+                      namespace:
+                        description: Namespace of the RESTAction.
+                        type: string
+                    required:
+                    - name
+                    - namespace
+                    type: object
                   verbsDescription:
                     description: 'VerbsDescription: the list of verbs to use on this
                       resource'
