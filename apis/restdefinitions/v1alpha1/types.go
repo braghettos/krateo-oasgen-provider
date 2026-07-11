@@ -422,6 +422,24 @@ type Resource struct {
 	// shape, it is intentionally mutable.
 	// +optional
 	ObserveApiRef *ApiRef `json:"observeApiRef,omitempty"`
+	// CreateApiRef, when set, delegates CREATE of this resource to a Snowplow RESTAction instead of the
+	// create verb: the controller invokes the referenced RESTAction (passing the resource's name/namespace/
+	// uid and its whole spec — the desired state — as request extras) to run the multi-call provisioning
+	// sequence, and projects any composed .status it returns into this resource's status. The RESTAction
+	// MUST be idempotent: the controller does not verify per-call success — it re-invokes create every
+	// reconcile until Observe reports the resource exists (level-based convergence). This therefore REQUIRES
+	// a get or findby verb (the observe that reports non-existence); with neither, the resource is marked
+	// Available after a single unverified invocation. It does NOT compose with observeApiRef, which reports
+	// existence unconditionally and so would suppress the create. Dissolves proxies whose only job is to
+	// chain create calls (e.g. create instance -> attach disk -> start).
+	// +optional
+	CreateApiRef *ApiRef `json:"createApiRef,omitempty"`
+	// DeleteApiRef, when set, delegates DELETE of this resource to a Snowplow RESTAction instead of the
+	// delete verb: on deletion the controller invokes the referenced RESTAction (the teardown sequence) and
+	// holds the finalizer until it succeeds. The RESTAction MUST be idempotent and tolerate an already-gone
+	// sub-resource.
+	// +optional
+	DeleteApiRef *ApiRef `json:"deleteApiRef,omitempty"`
 }
 
 // ApiRef references a Snowplow RESTAction (templates.krateo.io/v1) that the controller resolves via
