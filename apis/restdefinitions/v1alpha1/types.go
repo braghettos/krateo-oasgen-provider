@@ -277,6 +277,19 @@ type VerbsDescription struct {
 	// e.g. an existence check that returns 410 Gone or 204 for a missing resource. Intended for get/findby.
 	// +optional
 	NotFoundCodes []int `json:"notFoundCodes,omitempty"`
+	// NotFoundBody is the body-based counterpart of NotFoundCodes: a gojq predicate evaluated against the
+	// successful (2xx) observe-response. When it yields true the external resource is treated as NOT
+	// existing, so the reconciler creates it. Use it for APIs that signal absence with a 200 body rather
+	// than a status code. The program must return a boolean, and its input '.' is the RAW body, whose shape
+	// differs by verb:
+	//   - get:    the whole GET body — e.g. `.items | length == 0`, `.deleted == true`, `.status == "NOT_FOUND"`.
+	//   - findby: the SINGLE matched item (a findby no-match already yields not-found on its own), so write
+	//             it against the item — e.g. a tombstone `.status == "deleted"`; a list-shaped predicate is
+	//             meaningless here.
+	// Intended for get/findby only. It is not evaluated while the resource is Pending (mid async create), and
+	// a non-boolean result is a reconcile error.
+	// +optional
+	NotFoundBody *JQProgram `json:"notFoundBody,omitempty"`
 	// Async declares long-running-operation (async) handling for this mutating verb: after the trigger call
 	// returns an operation handle, the controller polls an operations endpoint until it reaches a terminal
 	// status, turning an asynchronous API into a synchronous reconcile. Set only on create/update/delete.
