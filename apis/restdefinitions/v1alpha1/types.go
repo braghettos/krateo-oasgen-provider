@@ -388,7 +388,7 @@ type QueryParam struct {
 	Value string `json:"value"`
 }
 
-// +kubebuilder:validation:XValidation:rule="!(has(self.createApiRef) && has(self.observeApiRef))",message="createApiRef and observeApiRef are mutually exclusive: observeApiRef reports existence unconditionally and would suppress createApiRef"
+// +kubebuilder:validation:XValidation:rule="!(has(self.createApiRef) && has(self.observeApiRef) && !has(self.observeApiRef.notFoundExpr))",message="createApiRef with observeApiRef requires observeApiRef.notFoundExpr, so a create can be triggered when the delegated observe reports the resource absent"
 // +kubebuilder:validation:XValidation:rule="!has(self.createApiRef) || self.verbsDescription.exists(v, v.action == 'get' || v.action == 'findby')",message="createApiRef requires a get or findby verb so the controller can verify the create converged (level-based convergence)"
 type Resource struct {
 	// Name: the name of the resource to manage
@@ -430,10 +430,10 @@ type Resource struct {
 	// sequence, and projects any composed .status it returns into this resource's status. The RESTAction
 	// MUST be idempotent: the controller does not verify per-call success — it re-invokes create every
 	// reconcile until Observe reports the resource exists (level-based convergence). This therefore REQUIRES
-	// a get or findby verb (the observe that reports non-existence); with neither, the resource is marked
-	// Available after a single unverified invocation. It does NOT compose with observeApiRef, which reports
-	// existence unconditionally and so would suppress the create. Dissolves proxies whose only job is to
-	// chain create calls (e.g. create instance -> attach disk -> start).
+	// a get/findby verb — OR an observeApiRef whose notFoundExpr reports non-existence — the observe that
+	// reports non-existence; with none, the resource is marked Available after a single unverified
+	// invocation. Dissolves proxies whose only job is to chain create calls (e.g. create instance -> attach
+	// disk -> start).
 	// +optional
 	CreateApiRef *ApiRef `json:"createApiRef,omitempty"`
 	// DeleteApiRef, when set, delegates DELETE of this resource to a Snowplow RESTAction instead of the
@@ -463,6 +463,17 @@ type ApiRef struct {
 	// on conflict. Use them to parameterize the RESTAction (e.g. a fixed endpoint or api-version).
 	// +optional
 	Extras *apiextensionsv1.JSON `json:"extras,omitempty"`
+	// NotFoundExpr (observeApiRef only) is a gojq boolean predicate evaluated against {spec, status}, where
+	// status is the RESTAction's composed result. When it returns true the resource is reported as NOT
+	// existing, so the controller creates it — this is what lets observeApiRef compose with createApiRef
+	// (which otherwise it cannot, because a delegated observe reports existence unconditionally).
+	// +optional
+	NotFoundExpr *JQProgram `json:"notFoundExpr,omitempty"`
+	// UpToDateExpr (observeApiRef only) is a gojq boolean predicate over {spec, status}. When it returns
+	// false the resource is reported as drifted, so the controller updates it (composing with updateApiRef).
+	// Absent => the resource is assumed up-to-date.
+	// +optional
+	UpToDateExpr *JQProgram `json:"upToDateExpr,omitempty"`
 }
 
 // RestDefinitionSpec is the specification of a RestDefinition.

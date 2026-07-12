@@ -127,10 +127,10 @@ spec:
                       sequence, and projects any composed .status it returns into this resource's status. The RESTAction
                       MUST be idempotent: the controller does not verify per-call success — it re-invokes create every
                       reconcile until Observe reports the resource exists (level-based convergence). This therefore REQUIRES
-                      a get or findby verb (the observe that reports non-existence); with neither, the resource is marked
-                      Available after a single unverified invocation. It does NOT compose with observeApiRef, which reports
-                      existence unconditionally and so would suppress the create. Dissolves proxies whose only job is to
-                      chain create calls (e.g. create instance -> attach disk -> start).
+                      a get/findby verb — OR an observeApiRef whose notFoundExpr reports non-existence — the observe that
+                      reports non-existence; with none, the resource is marked Available after a single unverified
+                      invocation. Dissolves proxies whose only job is to chain create calls (e.g. create instance -> attach
+                      disk -> start).
                     properties:
                       extras:
                         description: |-
@@ -144,6 +144,61 @@ spec:
                       namespace:
                         description: Namespace of the RESTAction.
                         type: string
+                      notFoundExpr:
+                        description: |-
+                          NotFoundExpr (observeApiRef only) is a gojq boolean predicate evaluated against {spec, status}, where
+                          status is the RESTAction's composed result. When it returns true the resource is reported as NOT
+                          existing, so the controller creates it — this is what lets observeApiRef compose with createApiRef
+                          (which otherwise it cannot, because a delegated observe reports existence unconditionally).
+                        properties:
+                          entrypoint:
+                            description: |-
+                              Entrypoint is the jq function defined in the referenced module to invoke, e.g. "normalize".
+                              If empty, the whole module body is executed as the program. Only meaningful together with ref.
+                            type: string
+                          inline:
+                            description: Inline is a gojq source literal. Best for
+                              short, single-use expressions.
+                            type: string
+                          ref:
+                            description: |-
+                              Ref references a self-contained .jq module asset, using the SAME URI scheme as spec.oasPath:
+                                configmap://<namespace>/<name>/<key>   |   http(s)://<url>
+                            pattern: ^(configmap:\/\/([a-z0-9-]+)\/([a-z0-9-]+)\/([a-zA-Z0-9.-_]+)|https?:\/\/\S+)$
+                            type: string
+                        type: object
+                        x-kubernetes-validations:
+                        - message: exactly one of inline or ref must be set
+                          rule: has(self.inline) != has(self.ref)
+                        - message: entrypoint is only valid together with ref
+                          rule: '!has(self.entrypoint) || has(self.ref)'
+                      upToDateExpr:
+                        description: |-
+                          UpToDateExpr (observeApiRef only) is a gojq boolean predicate over {spec, status}. When it returns
+                          false the resource is reported as drifted, so the controller updates it (composing with updateApiRef).
+                          Absent => the resource is assumed up-to-date.
+                        properties:
+                          entrypoint:
+                            description: |-
+                              Entrypoint is the jq function defined in the referenced module to invoke, e.g. "normalize".
+                              If empty, the whole module body is executed as the program. Only meaningful together with ref.
+                            type: string
+                          inline:
+                            description: Inline is a gojq source literal. Best for
+                              short, single-use expressions.
+                            type: string
+                          ref:
+                            description: |-
+                              Ref references a self-contained .jq module asset, using the SAME URI scheme as spec.oasPath:
+                                configmap://<namespace>/<name>/<key>   |   http(s)://<url>
+                            pattern: ^(configmap:\/\/([a-z0-9-]+)\/([a-z0-9-]+)\/([a-zA-Z0-9.-_]+)|https?:\/\/\S+)$
+                            type: string
+                        type: object
+                        x-kubernetes-validations:
+                        - message: exactly one of inline or ref must be set
+                          rule: has(self.inline) != has(self.ref)
+                        - message: entrypoint is only valid together with ref
+                          rule: '!has(self.entrypoint) || has(self.ref)'
                     required:
                     - name
                     - namespace
@@ -167,6 +222,61 @@ spec:
                       namespace:
                         description: Namespace of the RESTAction.
                         type: string
+                      notFoundExpr:
+                        description: |-
+                          NotFoundExpr (observeApiRef only) is a gojq boolean predicate evaluated against {spec, status}, where
+                          status is the RESTAction's composed result. When it returns true the resource is reported as NOT
+                          existing, so the controller creates it — this is what lets observeApiRef compose with createApiRef
+                          (which otherwise it cannot, because a delegated observe reports existence unconditionally).
+                        properties:
+                          entrypoint:
+                            description: |-
+                              Entrypoint is the jq function defined in the referenced module to invoke, e.g. "normalize".
+                              If empty, the whole module body is executed as the program. Only meaningful together with ref.
+                            type: string
+                          inline:
+                            description: Inline is a gojq source literal. Best for
+                              short, single-use expressions.
+                            type: string
+                          ref:
+                            description: |-
+                              Ref references a self-contained .jq module asset, using the SAME URI scheme as spec.oasPath:
+                                configmap://<namespace>/<name>/<key>   |   http(s)://<url>
+                            pattern: ^(configmap:\/\/([a-z0-9-]+)\/([a-z0-9-]+)\/([a-zA-Z0-9.-_]+)|https?:\/\/\S+)$
+                            type: string
+                        type: object
+                        x-kubernetes-validations:
+                        - message: exactly one of inline or ref must be set
+                          rule: has(self.inline) != has(self.ref)
+                        - message: entrypoint is only valid together with ref
+                          rule: '!has(self.entrypoint) || has(self.ref)'
+                      upToDateExpr:
+                        description: |-
+                          UpToDateExpr (observeApiRef only) is a gojq boolean predicate over {spec, status}. When it returns
+                          false the resource is reported as drifted, so the controller updates it (composing with updateApiRef).
+                          Absent => the resource is assumed up-to-date.
+                        properties:
+                          entrypoint:
+                            description: |-
+                              Entrypoint is the jq function defined in the referenced module to invoke, e.g. "normalize".
+                              If empty, the whole module body is executed as the program. Only meaningful together with ref.
+                            type: string
+                          inline:
+                            description: Inline is a gojq source literal. Best for
+                              short, single-use expressions.
+                            type: string
+                          ref:
+                            description: |-
+                              Ref references a self-contained .jq module asset, using the SAME URI scheme as spec.oasPath:
+                                configmap://<namespace>/<name>/<key>   |   http(s)://<url>
+                            pattern: ^(configmap:\/\/([a-z0-9-]+)\/([a-z0-9-]+)\/([a-zA-Z0-9.-_]+)|https?:\/\/\S+)$
+                            type: string
+                        type: object
+                        x-kubernetes-validations:
+                        - message: exactly one of inline or ref must be set
+                          rule: has(self.inline) != has(self.ref)
+                        - message: entrypoint is only valid together with ref
+                          rule: '!has(self.entrypoint) || has(self.ref)'
                     required:
                     - name
                     - namespace
@@ -222,6 +332,61 @@ spec:
                       namespace:
                         description: Namespace of the RESTAction.
                         type: string
+                      notFoundExpr:
+                        description: |-
+                          NotFoundExpr (observeApiRef only) is a gojq boolean predicate evaluated against {spec, status}, where
+                          status is the RESTAction's composed result. When it returns true the resource is reported as NOT
+                          existing, so the controller creates it — this is what lets observeApiRef compose with createApiRef
+                          (which otherwise it cannot, because a delegated observe reports existence unconditionally).
+                        properties:
+                          entrypoint:
+                            description: |-
+                              Entrypoint is the jq function defined in the referenced module to invoke, e.g. "normalize".
+                              If empty, the whole module body is executed as the program. Only meaningful together with ref.
+                            type: string
+                          inline:
+                            description: Inline is a gojq source literal. Best for
+                              short, single-use expressions.
+                            type: string
+                          ref:
+                            description: |-
+                              Ref references a self-contained .jq module asset, using the SAME URI scheme as spec.oasPath:
+                                configmap://<namespace>/<name>/<key>   |   http(s)://<url>
+                            pattern: ^(configmap:\/\/([a-z0-9-]+)\/([a-z0-9-]+)\/([a-zA-Z0-9.-_]+)|https?:\/\/\S+)$
+                            type: string
+                        type: object
+                        x-kubernetes-validations:
+                        - message: exactly one of inline or ref must be set
+                          rule: has(self.inline) != has(self.ref)
+                        - message: entrypoint is only valid together with ref
+                          rule: '!has(self.entrypoint) || has(self.ref)'
+                      upToDateExpr:
+                        description: |-
+                          UpToDateExpr (observeApiRef only) is a gojq boolean predicate over {spec, status}. When it returns
+                          false the resource is reported as drifted, so the controller updates it (composing with updateApiRef).
+                          Absent => the resource is assumed up-to-date.
+                        properties:
+                          entrypoint:
+                            description: |-
+                              Entrypoint is the jq function defined in the referenced module to invoke, e.g. "normalize".
+                              If empty, the whole module body is executed as the program. Only meaningful together with ref.
+                            type: string
+                          inline:
+                            description: Inline is a gojq source literal. Best for
+                              short, single-use expressions.
+                            type: string
+                          ref:
+                            description: |-
+                              Ref references a self-contained .jq module asset, using the SAME URI scheme as spec.oasPath:
+                                configmap://<namespace>/<name>/<key>   |   http(s)://<url>
+                            pattern: ^(configmap:\/\/([a-z0-9-]+)\/([a-z0-9-]+)\/([a-zA-Z0-9.-_]+)|https?:\/\/\S+)$
+                            type: string
+                        type: object
+                        x-kubernetes-validations:
+                        - message: exactly one of inline or ref must be set
+                          rule: has(self.inline) != has(self.ref)
+                        - message: entrypoint is only valid together with ref
+                          rule: '!has(self.entrypoint) || has(self.ref)'
                     required:
                     - name
                     - namespace
@@ -244,6 +409,61 @@ spec:
                       namespace:
                         description: Namespace of the RESTAction.
                         type: string
+                      notFoundExpr:
+                        description: |-
+                          NotFoundExpr (observeApiRef only) is a gojq boolean predicate evaluated against {spec, status}, where
+                          status is the RESTAction's composed result. When it returns true the resource is reported as NOT
+                          existing, so the controller creates it — this is what lets observeApiRef compose with createApiRef
+                          (which otherwise it cannot, because a delegated observe reports existence unconditionally).
+                        properties:
+                          entrypoint:
+                            description: |-
+                              Entrypoint is the jq function defined in the referenced module to invoke, e.g. "normalize".
+                              If empty, the whole module body is executed as the program. Only meaningful together with ref.
+                            type: string
+                          inline:
+                            description: Inline is a gojq source literal. Best for
+                              short, single-use expressions.
+                            type: string
+                          ref:
+                            description: |-
+                              Ref references a self-contained .jq module asset, using the SAME URI scheme as spec.oasPath:
+                                configmap://<namespace>/<name>/<key>   |   http(s)://<url>
+                            pattern: ^(configmap:\/\/([a-z0-9-]+)\/([a-z0-9-]+)\/([a-zA-Z0-9.-_]+)|https?:\/\/\S+)$
+                            type: string
+                        type: object
+                        x-kubernetes-validations:
+                        - message: exactly one of inline or ref must be set
+                          rule: has(self.inline) != has(self.ref)
+                        - message: entrypoint is only valid together with ref
+                          rule: '!has(self.entrypoint) || has(self.ref)'
+                      upToDateExpr:
+                        description: |-
+                          UpToDateExpr (observeApiRef only) is a gojq boolean predicate over {spec, status}. When it returns
+                          false the resource is reported as drifted, so the controller updates it (composing with updateApiRef).
+                          Absent => the resource is assumed up-to-date.
+                        properties:
+                          entrypoint:
+                            description: |-
+                              Entrypoint is the jq function defined in the referenced module to invoke, e.g. "normalize".
+                              If empty, the whole module body is executed as the program. Only meaningful together with ref.
+                            type: string
+                          inline:
+                            description: Inline is a gojq source literal. Best for
+                              short, single-use expressions.
+                            type: string
+                          ref:
+                            description: |-
+                              Ref references a self-contained .jq module asset, using the SAME URI scheme as spec.oasPath:
+                                configmap://<namespace>/<name>/<key>   |   http(s)://<url>
+                            pattern: ^(configmap:\/\/([a-z0-9-]+)\/([a-z0-9-]+)\/([a-zA-Z0-9.-_]+)|https?:\/\/\S+)$
+                            type: string
+                        type: object
+                        x-kubernetes-validations:
+                        - message: exactly one of inline or ref must be set
+                          rule: has(self.inline) != has(self.ref)
+                        - message: entrypoint is only valid together with ref
+                          rule: '!has(self.entrypoint) || has(self.ref)'
                     required:
                     - name
                     - namespace
@@ -843,10 +1063,10 @@ spec:
                 - verbsDescription
                 type: object
                 x-kubernetes-validations:
-                - message: 'createApiRef and observeApiRef are mutually exclusive:
-                    observeApiRef reports existence unconditionally and would suppress
-                    createApiRef'
-                  rule: '!(has(self.createApiRef) && has(self.observeApiRef))'
+                - message: createApiRef with observeApiRef requires observeApiRef.notFoundExpr,
+                    so a create can be triggered when the delegated observe reports
+                    the resource absent
+                  rule: '!(has(self.createApiRef) && has(self.observeApiRef) && !has(self.observeApiRef.notFoundExpr))'
                 - message: createApiRef requires a get or findby verb so the controller
                     can verify the create converged (level-based convergence)
                   rule: '!has(self.createApiRef) || self.verbsDescription.exists(v,
