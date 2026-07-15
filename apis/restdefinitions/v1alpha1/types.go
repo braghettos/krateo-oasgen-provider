@@ -390,6 +390,7 @@ type QueryParam struct {
 
 // +kubebuilder:validation:XValidation:rule="!(has(self.createApiRef) && has(self.observeApiRef) && !has(self.observeApiRef.notFoundExpr))",message="createApiRef with observeApiRef requires observeApiRef.notFoundExpr, so a create can be triggered when the delegated observe reports the resource absent"
 // +kubebuilder:validation:XValidation:rule="!has(self.createApiRef) || self.verbsDescription.exists(v, v.action == 'get' || v.action == 'findby')",message="createApiRef requires a get or findby verb so the controller can verify the create converged (level-based convergence)"
+// +kubebuilder:validation:XValidation:rule="!has(self.compareScope) || self.compareScope != 'identifiersAndStatus' || (has(self.identifiers) && size(self.identifiers) > 0) || (has(self.additionalStatusFields) && size(self.additionalStatusFields) > 0)",message="compareScope 'identifiersAndStatus' requires at least one identifier or additionalStatusField to compare against"
 type Resource struct {
 	// Name: the name of the resource to manage
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="Kind is immutable, you cannot change that once the CRD has been generated"
@@ -406,6 +407,17 @@ type Resource struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="AdditionalStatusFields are immutable, you cannot change them once the CRD has been generated"
 	// +optional
 	AdditionalStatusFields []string `json:"additionalStatusFields,omitempty"`
+	// CompareScope selects which fields the drift comparison (Observe) considers when deciding whether the
+	// external resource is up to date.
+	//   - "fullSpec" (default, also when unset): every spec field is compared against the observed response.
+	//   - "identifiersAndStatus": only the fields listed in identifiers + additionalStatusFields are compared.
+	//     Fields outside that set no longer trigger updates, so use this ONLY when those fields capture
+	//     everything worth reconciling (e.g. all other spec fields are create-only / server-managed). It trades
+	//     precision for ergonomics: no per-field responseTransform/fieldMapping is needed to stop false drift on
+	//     divergently-shaped response fields. Being reconcile behavior rather than CRD shape, it is mutable.
+	// +kubebuilder:validation:Enum=fullSpec;identifiersAndStatus
+	// +optional
+	CompareScope string `json:"compareScope,omitempty"`
 	// ConfigurationFields: the list of fields to use as configuration fields
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="ConfigurationFields are immutable, you cannot change them once the CRD has been generated"
 	// +optional

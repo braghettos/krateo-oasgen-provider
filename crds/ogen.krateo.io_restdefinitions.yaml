@@ -83,6 +83,20 @@ spec:
                     - message: AdditionalStatusFields are immutable, you cannot change
                         them once the CRD has been generated
                       rule: self == oldSelf
+                  compareScope:
+                    description: |-
+                      CompareScope selects which fields the drift comparison (Observe) considers when deciding whether the
+                      external resource is up to date.
+                        - "fullSpec" (default, also when unset): every spec field is compared against the observed response.
+                        - "identifiersAndStatus": only the fields listed in identifiers + additionalStatusFields are compared.
+                          Fields outside that set no longer trigger updates, so use this ONLY when those fields capture
+                          everything worth reconciling (e.g. all other spec fields are create-only / server-managed). It trades
+                          precision for ergonomics: no per-field responseTransform/fieldMapping is needed to stop false drift on
+                          divergently-shaped response fields. Being reconcile behavior rather than CRD shape, it is mutable.
+                    enum:
+                    - fullSpec
+                    - identifiersAndStatus
+                    type: string
                   configurationFields:
                     description: 'ConfigurationFields: the list of fields to use as
                       configuration fields'
@@ -1071,6 +1085,11 @@ spec:
                     can verify the create converged (level-based convergence)
                   rule: '!has(self.createApiRef) || self.verbsDescription.exists(v,
                     v.action == ''get'' || v.action == ''findby'')'
+                - message: compareScope 'identifiersAndStatus' requires at least one
+                    identifier or additionalStatusField to compare against
+                  rule: '!has(self.compareScope) || self.compareScope != ''identifiersAndStatus''
+                    || (has(self.identifiers) && size(self.identifiers) > 0) || (has(self.additionalStatusFields)
+                    && size(self.additionalStatusFields) > 0)'
               resourceGroup:
                 description: 'Group: the group of the resource to manage'
                 type: string
