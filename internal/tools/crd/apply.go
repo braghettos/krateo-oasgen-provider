@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/krateoplatformops/oasgen-provider/internal/tools/crd/generation"
-	"github.com/krateoplatformops/oasgen-provider/internal/tools/kube"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -28,20 +27,38 @@ func Get(ctx context.Context, kubecli client.Client, gr schema.GroupResource) (*
 	return res, nil
 }
 
+// OwnerAnnotation records which RestDefinition (namespace/name) owns a generated CRD. It enforces that a CRD
+// for a given group+kind is managed by exactly one RestDefinition: a second RestDefinition targeting the same
+// kind is rejected, so two RDCs never end up reconciling the same resource (every served version's endpoint
+// serves all objects, so two controllers would double-reconcile). It also makes whole-CRD teardown on delete
+// provably safe — the deleting RestDefinition owns every version.
+const OwnerAnnotation = "krateo.io/owned-by-restdefinition"
+
+// ErrOwnershipConflict is returned when the live CRD is owned by a different RestDefinition. It is not a
+// Kubernetes conflict, so it is surfaced immediately (not retried).
+type ErrOwnershipConflict struct {
+	CRD, Owner, Requester string
+}
+
+func (e *ErrOwnershipConflict) Error() string {
+	return fmt.Sprintf("CRD %q is owned by RestDefinition %q; RestDefinition %q may not manage the same group+kind", e.CRD, e.Owner, e.Requester)
+}
+
 // ApplyOrUpdateCRD reconciles a freshly generated single-version CRD (newcrd) into the live, possibly
 // multi-version, CRD WITHOUT clobbering other versions:
 //
-//   - live absent             → create newcrd as-is.
+//   - live absent             → create newcrd as-is (stamped with owner).
 //   - live already has this version → replace ONLY that version's schema (spec+status) in place, preserving
 //     every other version, the vacuum, and the live served/storage topology. Breaking same-version changes
 //     are allowed (this is oasgen's deliberate divergence from core-provider, which does status-only here).
 //   - live lacks this version → append the version alongside the non-served "vacuum" storage version.
 //
-// Conversion is set to None (the vacuum storage version provides lossless cross-version storage; no webhook).
-// The merge path uses optimistic concurrency (read → merge → Update with the read's resourceVersion, retry on
-// conflict), so a concurrent sibling-version change is re-merged on the next attempt rather than clobbered by
-// a stale full PUT. Returns the target GVR (whose Version is newcrd's sole version name).
-func ApplyOrUpdateCRD(ctx context.Context, kubecli client.Client, newcrd *apiextensionsv1.CustomResourceDefinition) (schema.GroupVersionResource, error) {
+// owner (the managing RestDefinition's namespace/name) is enforced: a CRD owned by a DIFFERENT RestDefinition
+// is rejected with *ErrOwnershipConflict; an unowned pre-existing CRD is adopted. Conversion is set to None
+// (the vacuum storage version provides lossless cross-version storage; no webhook). The merge path uses
+// optimistic concurrency (read → merge → Update with the read's resourceVersion, retry on conflict), so a
+// concurrent sibling-version change is re-merged rather than clobbered. Returns the target GVR.
+func ApplyOrUpdateCRD(ctx context.Context, kubecli client.Client, newcrd *apiextensionsv1.CustomResourceDefinition, owner string) (schema.GroupVersionResource, error) {
 	if len(newcrd.Spec.Versions) == 0 {
 		return schema.GroupVersionResource{}, fmt.Errorf("generated CRD %s has no versions", newcrd.Name)
 	}
@@ -52,26 +69,31 @@ func ApplyOrUpdateCRD(ctx context.Context, kubecli client.Client, newcrd *apiext
 	}
 	ensureCRDTypeMeta(newcrd)
 	generation.AddVersionColumn(newcrd)
+	setOwner(newcrd, owner)
 
 	live, err := Get(ctx, kubecli, gvr.GroupResource())
 	if err != nil {
 		return gvr, fmt.Errorf("getting CRD %s: %w", gvr.GroupResource().String(), err)
 	}
 
-	// Create: no live CRD yet. A concurrent create of the SAME CRD is prevented upstream by the group+kind
-	// uniqueness guard (two RestDefinitions may not target the same kind), so last-write-wins on create is
-	// acceptable here.
+	// Create when absent. If a concurrent create beat us (AlreadyExists), fall through to the ownership-checked
+	// merge path rather than overwriting — so we never clobber another RestDefinition's CRD.
 	if live == nil {
-		if err := kube.Apply(ctx, kubecli, newcrd, kube.ApplyOptions{}); err != nil {
-			return gvr, fmt.Errorf("creating CRD %s: %w", newcrd.Name, err)
+		if cerr := kubecli.Create(ctx, newcrd); cerr == nil {
+			return gvr, nil
+		} else if !apierrors.IsAlreadyExists(cerr) {
+			return gvr, fmt.Errorf("creating CRD %s: %w", newcrd.Name, cerr)
 		}
-		return gvr, nil
 	}
 
-	// Merge into the live CRD with optimistic concurrency: re-read inside the retry and decide in-place vs
-	// append against the FRESH state, then Update with that read's resourceVersion.
+	// Merge into the live CRD with optimistic concurrency: re-read inside the retry, verify ownership against
+	// the FRESH state, decide in-place vs append, then Update with that read's resourceVersion.
 	gvk := schema.GroupVersionKind{Group: newcrd.Spec.Group, Kind: newcrd.Spec.Names.Kind, Version: gvr.Version}
 	err = applyMergedWithRetry(ctx, kubecli, gvr.GroupResource(), func(cur *apiextensionsv1.CustomResourceDefinition) error {
+		if o := ownerOf(cur); o != "" && o != owner {
+			return &ErrOwnershipConflict{CRD: cur.Name, Owner: o, Requester: owner}
+		}
+		setOwner(cur, owner) // adopt if previously unowned
 		ensureCRDTypeMeta(cur)
 		if generation.GVKExists(cur, gvk) {
 			// In-place: swap ONLY this version's schema (breaking allowed); other versions + vacuum untouched.
@@ -90,9 +112,28 @@ func ApplyOrUpdateCRD(ctx context.Context, kubecli client.Client, newcrd *apiext
 		return nil
 	})
 	if err != nil {
+		if _, ok := err.(*ErrOwnershipConflict); ok {
+			return gvr, err // surface the ownership conflict verbatim
+		}
 		return gvr, fmt.Errorf("merging version %s into CRD %s: %w", gvr.Version, gvr.GroupResource().String(), err)
 	}
 	return gvr, nil
+}
+
+// setOwner stamps the OwnerAnnotation (no-op for an empty owner, e.g. tests that don't exercise ownership).
+func setOwner(crd *apiextensionsv1.CustomResourceDefinition, owner string) {
+	if owner == "" {
+		return
+	}
+	if crd.Annotations == nil {
+		crd.Annotations = map[string]string{}
+	}
+	crd.Annotations[OwnerAnnotation] = owner
+}
+
+// ownerOf returns the CRD's owning RestDefinition (namespace/name), or "" if unowned.
+func ownerOf(crd *apiextensionsv1.CustomResourceDefinition) string {
+	return crd.Annotations[OwnerAnnotation]
 }
 
 // applyMergedWithRetry re-reads the CRD by group-resource, applies mergeFn, and Updates it with optimistic

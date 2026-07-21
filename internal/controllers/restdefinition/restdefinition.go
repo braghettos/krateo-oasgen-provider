@@ -545,7 +545,8 @@ func (e *external) generateAndApplyCRDs(ctx context.Context, cr *definitionv1alp
 		return fmt.Errorf("unmarshalling CRD: %w", err)
 	}
 	e.log.Debug("Applying CRD", "Kind:", cr.Spec.Resource.Kind, "Group:", cr.Spec.ResourceGroup)
-	if _, err = crd.ApplyOrUpdateCRD(ctx, e.kube, crdu); err != nil {
+	owner := cr.Namespace + "/" + cr.Name
+	if _, err = crd.ApplyOrUpdateCRD(ctx, e.kube, crdu, owner); err != nil {
 		return fmt.Errorf("installing CRD: %w", err)
 	}
 
@@ -571,7 +572,7 @@ func (e *external) generateAndApplyCRDs(ctx context.Context, cr *definitionv1alp
 			return fmt.Errorf("unmarshalling configuration CRD: %w", cerr)
 		}
 		e.log.Debug("Applying Configuration CRD", "Kind", cfgGVK.Kind, "Group", cfgGVK.Group)
-		if _, cerr = crd.ApplyOrUpdateCRD(ctx, e.kube, cfgCRDU); cerr != nil {
+		if _, cerr = crd.ApplyOrUpdateCRD(ctx, e.kube, cfgCRDU, owner); cerr != nil {
 			return fmt.Errorf("installing configuration CRD: %w", cerr)
 		}
 	}
