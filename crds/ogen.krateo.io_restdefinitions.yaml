@@ -1159,6 +1159,12 @@ spec:
                   HasSecuritySchemes: whether the OAS document defines security schemes.
                   Cached here so Observe does not need to re-fetch the OAS document on every reconcile.
                 type: boolean
+              oasHash:
+                description: |-
+                  OASHash: a content hash of the resolved OAS document at the last successful Create/Update. Observe
+                  re-hashes the referenced OAS each reconcile and treats a change as drift, so an edit to the OAS source
+                  (e.g. the referenced ConfigMap) is picked up even when oasPath itself is unchanged.
+                type: string
               oasPath:
                 description: 'OASPath: the path to the OAS Specification file.'
                 type: string
