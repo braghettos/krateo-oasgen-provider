@@ -123,6 +123,29 @@ func TestAppendVersion_SecondNewVersionDoesNotAddSecondVacuum(t *testing.T) {
 	assert.Len(t, after2.Spec.Versions, 4, "v1-0-0, v1-1-0, v1-2-0, vacuum")
 }
 
+func TestAppendVersion_DoesNotMutateCaller(t *testing.T) {
+	// Spare capacity (len 1, cap 8) is the config where a shallow value copy would share the backing array,
+	// so the served/storage flip would leak into the caller — guard that the deep copy prevents it.
+	versions := make([]apiextensionsv1.CustomResourceDefinitionVersion, 1, 8)
+	versions[0] = apiextensionsv1.CustomResourceDefinitionVersion{Name: "v1-0-0", Served: true, Storage: true}
+	base := apiextensionsv1.CustomResourceDefinition{
+		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
+			Group:    "g",
+			Names:    apiextensionsv1.CustomResourceDefinitionNames{Kind: "K", Plural: "widgets"},
+			Versions: versions,
+		},
+	}
+
+	_, err := AppendVersion(base, crdWith("g", "K",
+		apiextensionsv1.CustomResourceDefinitionVersion{Name: "v1-1-0", Served: true, Storage: true}))
+	require.NoError(t, err)
+
+	// caller's slice and flags must be untouched
+	require.Len(t, base.Spec.Versions, 1)
+	assert.True(t, base.Spec.Versions[0].Served, "caller's Served must not be mutated")
+	assert.True(t, base.Spec.Versions[0].Storage, "caller's Storage must not be mutated")
+}
+
 func TestRemoveStaleVersions(t *testing.T) {
 	crd := crdWith("g", "K",
 		apiextensionsv1.CustomResourceDefinitionVersion{Name: "v1-0-0"},

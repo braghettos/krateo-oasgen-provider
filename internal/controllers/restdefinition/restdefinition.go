@@ -38,7 +38,6 @@ import (
 	"github.com/krateoplatformops/oasgen-provider/internal/tools/deploy"
 	"github.com/krateoplatformops/oasgen-provider/internal/tools/deployment"
 	"github.com/krateoplatformops/oasgen-provider/internal/tools/filegetter"
-	"github.com/krateoplatformops/oasgen-provider/internal/tools/kube"
 	"github.com/krateoplatformops/oasgen-provider/internal/tools/oas2jsonschema"
 	"github.com/krateoplatformops/oasgen-provider/internal/tools/objects"
 	"github.com/krateoplatformops/oasgen-provider/internal/tools/plurals"
@@ -505,7 +504,10 @@ func (e *external) Create(ctx context.Context, mg resource.Managed) (err error) 
 		}
 
 		e.log.Debug("Applying CRD for", "Kind:", cr.Spec.Resource.Kind, "Group:", cr.Spec.ResourceGroup)
-		err = kube.Apply(ctx, e.kube, crdu, kube.ApplyOptions{})
+		// Version-aware apply: creates the CRD, or merges the version into a live multi-version CRD without
+		// clobbering other versions (append + vacuum, or in-place schema replace). Here (create-once path)
+		// the CRD is absent so this takes the create branch; the merge/append branches land with Update wiring.
+		_, err = crd.ApplyOrUpdateCRD(ctx, e.kube, crdu)
 		if err != nil {
 			return fmt.Errorf("installing CRD: %w", err)
 		}
@@ -546,7 +548,7 @@ func (e *external) Create(ctx context.Context, mg resource.Managed) (err error) 
 			}
 
 			e.log.Debug("Applying Configuration CRD", "Kind", cfgGVK.Kind, "Group", cfgGVK.Group)
-			err = kube.Apply(ctx, e.kube, cfgCRDU, kube.ApplyOptions{})
+			_, err = crd.ApplyOrUpdateCRD(ctx, e.kube, cfgCRDU)
 			if err != nil {
 				return fmt.Errorf("installing configuration CRD: %w", err)
 			}
