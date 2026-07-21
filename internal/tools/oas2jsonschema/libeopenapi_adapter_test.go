@@ -295,6 +295,16 @@ func TestLibOASDocumentAdapter(t *testing.T) {
 		assert.True(t, foundBasic, "BasicAuth scheme not found")
 		assert.True(t, foundAPIKey, "ApiKeyAuth scheme not found")
 	})
+
+	t.Run("Version should return info.version, and empty string when Info is absent", func(t *testing.T) {
+		withInfo := NewLibOASDocumentAdapter(&libopenapi.DocumentModel[v3.Document]{
+			Model: v3.Document{Info: &base.Info{Version: "1.2.3"}},
+		})
+		assert.Equal(t, "1.2.3", withInfo.Version())
+
+		noInfo := NewLibOASDocumentAdapter(&libopenapi.DocumentModel[v3.Document]{Model: v3.Document{}})
+		assert.Equal(t, "", noInfo.Version(), "missing Info must yield empty version, not panic")
+	})
 }
 
 func TestLibOASPathItemAdapter(t *testing.T) {

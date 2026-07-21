@@ -9,6 +9,9 @@ type Parser interface {
 type OASDocument interface {
 	FindPath(path string) (PathItem, bool)
 	SecuritySchemes() []SecuritySchemeInfo
+	// Version returns the OAS document's info.version, or "" when absent. It is the source of the
+	// target CRD's API version (normalized to a legal k8s version name before use).
+	Version() string
 }
 
 // PathItem defines the contract for a single API path.
