@@ -9,6 +9,7 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -37,8 +38,9 @@ func Get(ctx context.Context, kubecli client.Client, gr schema.GroupResource) (*
 //   - live lacks this version → append the version alongside the non-served "vacuum" storage version.
 //
 // Conversion is set to None (the vacuum storage version provides lossless cross-version storage; no webhook).
-// It always PUTs a FULLY MERGED CRD, so oasgen's GET-then-PUT kube.Apply never drops a sibling version.
-// Returns the target GVR (whose Version is newcrd's sole version name).
+// The merge path uses optimistic concurrency (read → merge → Update with the read's resourceVersion, retry on
+// conflict), so a concurrent sibling-version change is re-merged on the next attempt rather than clobbered by
+// a stale full PUT. Returns the target GVR (whose Version is newcrd's sole version name).
 func ApplyOrUpdateCRD(ctx context.Context, kubecli client.Client, newcrd *apiextensionsv1.CustomResourceDefinition) (schema.GroupVersionResource, error) {
 	if len(newcrd.Spec.Versions) == 0 {
 		return schema.GroupVersionResource{}, fmt.Errorf("generated CRD %s has no versions", newcrd.Name)
@@ -48,58 +50,66 @@ func ApplyOrUpdateCRD(ctx context.Context, kubecli client.Client, newcrd *apiext
 		Version:  newcrd.Spec.Versions[0].Name,
 		Resource: newcrd.Spec.Names.Plural,
 	}
-	// Surface the per-instance served version in kubectl; done on newcrd before any branch so create applies
-	// it and append carries it onto the new version.
-	generation.AddVersionColumn(newcrd)
 	ensureCRDTypeMeta(newcrd)
+	generation.AddVersionColumn(newcrd)
 
 	live, err := Get(ctx, kubecli, gvr.GroupResource())
 	if err != nil {
 		return gvr, fmt.Errorf("getting CRD %s: %w", gvr.GroupResource().String(), err)
 	}
 
-	// Create: no live CRD yet.
+	// Create: no live CRD yet. A concurrent create of the SAME CRD is prevented upstream by the group+kind
+	// uniqueness guard (two RestDefinitions may not target the same kind), so last-write-wins on create is
+	// acceptable here.
 	if live == nil {
 		if err := kube.Apply(ctx, kubecli, newcrd, kube.ApplyOptions{}); err != nil {
 			return gvr, fmt.Errorf("creating CRD %s: %w", newcrd.Name, err)
 		}
 		return gvr, nil
 	}
-	ensureCRDTypeMeta(live)
 
-	// STAGE 3 BLOCKER: the two merge branches below read `live` above, mutate it, then PUT the whole object
-	// via kube.Apply — which is last-write-wins (it copies the server's current resourceVersion onto our
-	// already-merged object, so a concurrent writer that added a sibling version between our Get and the PUT
-	// is silently clobbered). This is harmless while only the create branch is reachable (Stage 2), but BEFORE
-	// these branches go live in Stage 3 the merge+apply must move to optimistic concurrency: Update with the
-	// resourceVersion from the read that produced `live`, and on a 409 re-Get + re-merge + retry.
+	// Merge into the live CRD with optimistic concurrency: re-read inside the retry and decide in-place vs
+	// append against the FRESH state, then Update with that read's resourceVersion.
 	gvk := schema.GroupVersionKind{Group: newcrd.Spec.Group, Kind: newcrd.Spec.Names.Kind, Version: gvr.Version}
-
-	// In-place replace of an existing version's schema (breaking allowed). Preserve every other version and
-	// the live served/storage flags — only the schema is swapped.
-	if generation.GVKExists(live, gvk) {
-		replaceVersionSchema(live, gvr.Version, newcrd.Spec.Versions[0])
-		generation.AddVersionColumn(live)
-		setNoneConversion(live)
-		if err := kube.Apply(ctx, kubecli, live, kube.ApplyOptions{}); err != nil {
-			return gvr, fmt.Errorf("updating CRD %s version %s in place: %w", live.Name, gvr.Version, err)
+	err = applyMergedWithRetry(ctx, kubecli, gvr.GroupResource(), func(cur *apiextensionsv1.CustomResourceDefinition) error {
+		ensureCRDTypeMeta(cur)
+		if generation.GVKExists(cur, gvk) {
+			// In-place: swap ONLY this version's schema (breaking allowed); other versions + vacuum untouched.
+			replaceVersionSchema(cur, gvr.Version, newcrd.Spec.Versions[0])
+		} else {
+			// Append: add this version alongside the non-served vacuum storage version.
+			merged, aerr := generation.AppendVersion(*cur, *newcrd)
+			if aerr != nil {
+				return aerr
+			}
+			cur.Spec = merged.Spec
+			generation.SetServedStorage(cur, gvr.Version, true, false)
 		}
-		return gvr, nil
-	}
-
-	// Append a new served version alongside the vacuum storage version.
-	merged, err := generation.AppendVersion(*live, *newcrd)
+		setNoneConversion(cur)
+		generation.AddVersionColumn(cur)
+		return nil
+	})
 	if err != nil {
-		return gvr, fmt.Errorf("appending version %s to CRD %s: %w", gvr.Version, live.Name, err)
-	}
-	setNoneConversion(merged)
-	generation.SetServedStorage(merged, gvr.Version, true, false)
-	generation.AddVersionColumn(merged)
-	ensureCRDTypeMeta(merged)
-	if err := kube.Apply(ctx, kubecli, merged, kube.ApplyOptions{}); err != nil {
-		return gvr, fmt.Errorf("appending version to CRD %s: %w", merged.Name, err)
+		return gvr, fmt.Errorf("merging version %s into CRD %s: %w", gvr.Version, gvr.GroupResource().String(), err)
 	}
 	return gvr, nil
+}
+
+// applyMergedWithRetry re-reads the CRD by group-resource, applies mergeFn, and Updates it with optimistic
+// concurrency (the read's resourceVersion), retrying on conflict. Because it re-reads and re-merges on every
+// attempt, a concurrent change (e.g. another served version added) is merged on top rather than clobbered by
+// a stale full PUT.
+func applyMergedWithRetry(ctx context.Context, kubecli client.Client, gr schema.GroupResource, mergeFn func(*apiextensionsv1.CustomResourceDefinition) error) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		cur := &apiextensionsv1.CustomResourceDefinition{}
+		if err := kubecli.Get(ctx, client.ObjectKey{Name: gr.String()}, cur); err != nil {
+			return err
+		}
+		if err := mergeFn(cur); err != nil {
+			return err
+		}
+		return kubecli.Update(ctx, cur)
+	})
 }
 
 // replaceVersionSchema swaps ONLY the OpenAPIV3Schema of the named version with the generated one, leaving
