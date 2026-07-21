@@ -403,158 +403,8 @@ func (e *external) Create(ctx context.Context, mg resource.Managed) (err error) 
 	}
 
 	if !crdOk {
-		// Shim needed to convert definitionv1alpha1.VerbsDescription to oas2jsonschema.Verbs
-		// Verbs is a type defined within the oas2jsonschema package
-		// and so it's not tied with the RestDefinition CRD
-		verbs := make([]oas2jsonschema.Verb, len(cr.Spec.Resource.VerbsDescription))
-		for i, v := range cr.Spec.Resource.VerbsDescription {
-			verbs[i] = oas2jsonschema.Verb{
-				Action:       v.Action,
-				Method:       v.Method,
-				Path:         v.Path,
-				FieldMapping: toDomainFieldMapping(v),
-			}
-		}
-
-		// Shim needed to convert definitionv1alpha1.ConfigurationFields to oas2jsonschema.ConfigurationFields
-		configurationFields := make([]oas2jsonschema.ConfigurationField, 0, len(cr.Spec.Resource.ConfigurationFields))
-		for _, v := range cr.Spec.Resource.ConfigurationFields {
-			actions, err := expandWildcardActions(v.FromRestDefinition.Actions, cr.Spec.Resource.VerbsDescription)
-			if err != nil {
-				return fmt.Errorf("expanding wildcard for actions in configurationFields: %w", err)
-			}
-
-			configurationFields = append(configurationFields, oas2jsonschema.ConfigurationField{
-				FromOpenAPI: oas2jsonschema.FromOpenAPI{
-					Name: v.FromOpenAPI.Name,
-					In:   v.FromOpenAPI.In,
-				},
-				FromRestDefinition: oas2jsonschema.FromRestDefinition{
-					Actions: actions,
-				},
-			})
-		}
-
-		// Create the resource configuration for the OAS schema generator
-		// We pass only relevant fields from the RestDefinition needed for schema generation
-		resourceConfig := &oas2jsonschema.ResourceConfig{
-			Verbs:                  verbs,
-			Identifiers:            cr.Spec.Resource.Identifiers,
-			AdditionalStatusFields: cr.Spec.Resource.AdditionalStatusFields,
-			ConfigurationFields:    configurationFields,
-			ExcludedSpecFields:     cr.Spec.Resource.ExcludedSpecFields,
-		}
-
-		// Create the OAS schema generator
-		generator := oas2jsonschema.NewOASSchemaGenerator(
-			doc,
-			oas2jsonschema.DefaultGeneratorConfig(),
-			resourceConfig,
-		)
-
-		ctx, genSpan := oteltelemetry.Tracer().Start(ctx, "restdefinition.generate_crd")
-		defer genSpan.End()
-		defer func() { oteltelemetry.RecordError(genSpan, err) }()
-		genSpan.SetAttributes(
-			attribute.String("k8s.object.name", cr.Name),
-			attribute.String("k8s.object.namespace", cr.Namespace),
-			attribute.String("crd.group", gvk.Group),
-			attribute.String("crd.kind", gvk.Kind),
-		)
-
-		var result *oas2jsonschema.GenerationResult
-		result, err = generator.Generate()
-		if err != nil {
-			// Fatal error, we cannot continue
-			return fmt.Errorf("generating schemas: %w", err)
-		}
-		if len(result.GenerationWarnings) > 0 {
-			e.log.Debug("Some schema generation warnings were found, below the list")
-			for _, er := range result.GenerationWarnings {
-				e.log.Debug("Schema generation warning", "Warning", er)
-			}
-		}
-		if len(result.ValidationWarnings) > 0 {
-			e.log.Debug("Some schema validation warnings were found, below the list")
-			for _, er := range result.ValidationWarnings {
-				e.log.Debug("Schema validation warning", "Warning", er)
-			}
-		}
-
-		e.log.Debug("Generating CRD for", "Kind:", cr.Spec.Resource.Kind, "Group:", cr.Spec.ResourceGroup)
-
-		opts := crdgen.Options{
-			Group:        gvk.Group,
-			Version:      gvk.Version,
-			Kind:         gvk.Kind,
-			Categories:   []string{strings.ToLower(cr.Spec.Resource.Kind), "restresources", "rr"},
-			SpecSchema:   result.SpecSchema,
-			StatusSchema: result.StatusSchema,
-			Managed:      true,
-		}
-
-		res, err := crdgen.Generate(opts)
-		if err != nil {
-			return fmt.Errorf("generating CRD: %w", err)
-		}
-
-		crdu, err := crd.Unmarshal(res)
-		if err != nil {
-			return fmt.Errorf("unmarshalling CRD: %w", err)
-		}
-
-		e.log.Debug("Applying CRD for", "Kind:", cr.Spec.Resource.Kind, "Group:", cr.Spec.ResourceGroup)
-		// Version-aware apply: creates the CRD, or merges the version into a live multi-version CRD without
-		// clobbering other versions (append + vacuum, or in-place schema replace). Here (create-once path)
-		// the CRD is absent so this takes the create branch; the merge/append branches land with Update wiring.
-		_, err = crd.ApplyOrUpdateCRD(ctx, e.kube, crdu)
-		if err != nil {
-			return fmt.Errorf("installing CRD: %w", err)
-		}
-
-		// Only generate Configuration CRD if configuration fields are defined or if security schemes are defined
-		if len(configurationFields) > 0 || hasSecuritySchemes {
-			e.log.Debug("Configuration fields or security schemes defined, generating Configuration CRD")
-			e.log.Debug("Configuration fields length", "Length: ", len(configurationFields))
-			e.log.Debug("Has security schemes: ", "HasSecuritySchemes", hasSecuritySchemes)
-
-			cfgGVK := schema.GroupVersionKind{
-				Group:   cr.Spec.ResourceGroup,
-				Version: resourceVersion,
-				Kind:    text.CapitaliseFirstLetter(cr.Spec.Resource.Kind) + "Configuration",
-			}
-
-			e.log.Debug("Generating Configuration CRD", "Kind", cfgGVK.Kind, "Group", cfgGVK.Group)
-
-			e.log.Debug("Configuration Schema", "Schema", string(result.ConfigurationSchema))
-
-			cfgOpts := crdgen.Options{
-				Group:      cfgGVK.Group,
-				Version:    cfgGVK.Version,
-				Kind:       cfgGVK.Kind,
-				Categories: []string{strings.ToLower(cr.Spec.Resource.Kind), "restconfigs", "rc"},
-				SpecSchema: result.ConfigurationSchema,
-				Managed:    false,
-			}
-
-			cfgResource, err := crdgen.Generate(cfgOpts)
-			if err != nil {
-				return fmt.Errorf("generating configuration CRD: %w", err)
-			}
-
-			cfgCRDU, err := crd.Unmarshal(cfgResource)
-			if err != nil {
-				return fmt.Errorf("unmarshalling configuration CRD: %w", err)
-			}
-
-			e.log.Debug("Applying Configuration CRD", "Kind", cfgGVK.Kind, "Group", cfgGVK.Group)
-			_, err = crd.ApplyOrUpdateCRD(ctx, e.kube, cfgCRDU)
-			if err != nil {
-				return fmt.Errorf("installing configuration CRD: %w", err)
-			}
-			e.log.Debug("Applied Configuration CRD", "Kind", cfgGVK.Kind, "Group", cfgGVK.Group)
-		} else {
-			e.log.Debug("No configuration fields defined (No authentication or configurationFields specified), skipping Configuration CRD generation")
+		if err := e.generateAndApplyCRDs(ctx, cr, gvk, doc, hasSecuritySchemes); err != nil {
+			return err
 		}
 
 		cr.SetConditions(rtv1.Creating())
@@ -619,6 +469,115 @@ func (e *external) Create(ctx context.Context, mg resource.Managed) (err error) 
 	return err
 }
 
+// generateAndApplyCRDs generates the target CRD (and the Configuration CRD when configuration fields or
+// security schemes are present) from the OAS document, and applies each version-awarely via ApplyOrUpdateCRD
+// (create when absent, or in-place schema replace of the current version). It is shared by Create (first
+// install) and Update (regenerate when the OAS content changed), so an edited OAS is reflected in the CRD.
+func (e *external) generateAndApplyCRDs(ctx context.Context, cr *definitionv1alpha1.RestDefinition, gvk schema.GroupVersionKind, doc oas2jsonschema.OASDocument, hasSecuritySchemes bool) (err error) {
+	// Shim VerbsDescription -> oas2jsonschema.Verb (decoupled from the RestDefinition CRD types).
+	verbs := make([]oas2jsonschema.Verb, len(cr.Spec.Resource.VerbsDescription))
+	for i, v := range cr.Spec.Resource.VerbsDescription {
+		verbs[i] = oas2jsonschema.Verb{
+			Action:       v.Action,
+			Method:       v.Method,
+			Path:         v.Path,
+			FieldMapping: toDomainFieldMapping(v),
+		}
+	}
+
+	configurationFields := make([]oas2jsonschema.ConfigurationField, 0, len(cr.Spec.Resource.ConfigurationFields))
+	for _, v := range cr.Spec.Resource.ConfigurationFields {
+		actions, aerr := expandWildcardActions(v.FromRestDefinition.Actions, cr.Spec.Resource.VerbsDescription)
+		if aerr != nil {
+			return fmt.Errorf("expanding wildcard for actions in configurationFields: %w", aerr)
+		}
+		configurationFields = append(configurationFields, oas2jsonschema.ConfigurationField{
+			FromOpenAPI:        oas2jsonschema.FromOpenAPI{Name: v.FromOpenAPI.Name, In: v.FromOpenAPI.In},
+			FromRestDefinition: oas2jsonschema.FromRestDefinition{Actions: actions},
+		})
+	}
+
+	resourceConfig := &oas2jsonschema.ResourceConfig{
+		Verbs:                  verbs,
+		Identifiers:            cr.Spec.Resource.Identifiers,
+		AdditionalStatusFields: cr.Spec.Resource.AdditionalStatusFields,
+		ConfigurationFields:    configurationFields,
+		ExcludedSpecFields:     cr.Spec.Resource.ExcludedSpecFields,
+	}
+	generator := oas2jsonschema.NewOASSchemaGenerator(doc, oas2jsonschema.DefaultGeneratorConfig(), resourceConfig)
+
+	ctx, genSpan := oteltelemetry.Tracer().Start(ctx, "restdefinition.generate_crd")
+	defer genSpan.End()
+	defer func() { oteltelemetry.RecordError(genSpan, err) }()
+	genSpan.SetAttributes(
+		attribute.String("k8s.object.name", cr.Name),
+		attribute.String("k8s.object.namespace", cr.Namespace),
+		attribute.String("crd.group", gvk.Group),
+		attribute.String("crd.kind", gvk.Kind),
+	)
+
+	var result *oas2jsonschema.GenerationResult
+	result, err = generator.Generate()
+	if err != nil {
+		return fmt.Errorf("generating schemas: %w", err)
+	}
+	for _, w := range result.GenerationWarnings {
+		e.log.Debug("Schema generation warning", "Warning", w)
+	}
+	for _, w := range result.ValidationWarnings {
+		e.log.Debug("Schema validation warning", "Warning", w)
+	}
+
+	res, err := crdgen.Generate(crdgen.Options{
+		Group:        gvk.Group,
+		Version:      gvk.Version,
+		Kind:         gvk.Kind,
+		Categories:   []string{strings.ToLower(cr.Spec.Resource.Kind), "restresources", "rr"},
+		SpecSchema:   result.SpecSchema,
+		StatusSchema: result.StatusSchema,
+		Managed:      true,
+	})
+	if err != nil {
+		return fmt.Errorf("generating CRD: %w", err)
+	}
+	crdu, err := crd.Unmarshal(res)
+	if err != nil {
+		return fmt.Errorf("unmarshalling CRD: %w", err)
+	}
+	e.log.Debug("Applying CRD", "Kind:", cr.Spec.Resource.Kind, "Group:", cr.Spec.ResourceGroup)
+	if _, err = crd.ApplyOrUpdateCRD(ctx, e.kube, crdu); err != nil {
+		return fmt.Errorf("installing CRD: %w", err)
+	}
+
+	if len(configurationFields) > 0 || hasSecuritySchemes {
+		cfgGVK := schema.GroupVersionKind{
+			Group:   cr.Spec.ResourceGroup,
+			Version: resourceVersion,
+			Kind:    text.CapitaliseFirstLetter(cr.Spec.Resource.Kind) + "Configuration",
+		}
+		cfgRes, cerr := crdgen.Generate(crdgen.Options{
+			Group:      cfgGVK.Group,
+			Version:    cfgGVK.Version,
+			Kind:       cfgGVK.Kind,
+			Categories: []string{strings.ToLower(cr.Spec.Resource.Kind), "restconfigs", "rc"},
+			SpecSchema: result.ConfigurationSchema,
+			Managed:    false,
+		})
+		if cerr != nil {
+			return fmt.Errorf("generating configuration CRD: %w", cerr)
+		}
+		cfgCRDU, cerr := crd.Unmarshal(cfgRes)
+		if cerr != nil {
+			return fmt.Errorf("unmarshalling configuration CRD: %w", cerr)
+		}
+		e.log.Debug("Applying Configuration CRD", "Kind", cfgGVK.Kind, "Group", cfgGVK.Group)
+		if _, cerr = crd.ApplyOrUpdateCRD(ctx, e.kube, cfgCRDU); cerr != nil {
+			return fmt.Errorf("installing configuration CRD: %w", cerr)
+		}
+	}
+	return nil
+}
+
 func (e *external) Update(ctx context.Context, mg resource.Managed) (err error) {
 	cr, ok := mg.(*definitionv1alpha1.RestDefinition)
 	if !ok {
@@ -654,6 +613,17 @@ func (e *external) Update(ctx context.Context, mg resource.Managed) (err error) 
 		Kind:    text.CapitaliseFirstLetter(cr.Spec.Resource.Kind),
 	}
 	gvr := plurals.ToGroupVersionResource(gvk)
+
+	// Regenerate and re-apply the target CRD when the OAS content changed (same version → in-place schema
+	// replace, breaking allowed). This is what makes an edited OAS ConfigMap reach the CRD — previously Update
+	// only redeployed the RDC. Gated on the OAS content hash so a drift triggered by anything else (e.g. the
+	// deployment digest) does not needlessly re-run the crd generator.
+	if oasHash != cr.Status.OASHash {
+		e.log.Debug("OAS content changed, regenerating CRD", "oldHash", cr.Status.OASHash, "newHash", oasHash)
+		if gerr := e.generateAndApplyCRDs(ctx, cr, gvk, doc, hasSecuritySchemes); gerr != nil {
+			return fmt.Errorf("regenerating CRD from changed OAS: %w", gerr)
+		}
+	}
 
 	configurationGVR := getConfigurationGVR(cr, hasSecuritySchemes)
 	opts := deploy.DeployOptions{
