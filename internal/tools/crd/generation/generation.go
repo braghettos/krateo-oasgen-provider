@@ -39,19 +39,22 @@ func SetServedStorage(crd *apiextensionsv1.CustomResourceDefinition, version str
 // AppendVersion merges each version of toadd into crd. A version already present is left untouched
 // (idempotent). When a genuinely new version is added, a non-served "vacuum" storage version is injected
 // once (if absent) to hold stored objects, and every non-vacuum version is flipped to served=true /
-// storage=false so the vacuum remains the sole storage version. Returns the merged CRD (crd is taken by
-// value, so the caller's argument is not mutated).
+// storage=false so the vacuum remains the sole storage version. Returns the merged CRD. crd and toadd are
+// NOT mutated: it works on a deep copy (a shallow value copy would share the Spec.Versions backing array, so
+// the flip below could leak served/storage into the caller's slice), and appended versions are deep-copied
+// so their Schema pointers are not aliased with toadd.
 func AppendVersion(crd apiextensionsv1.CustomResourceDefinition, toadd apiextensionsv1.CustomResourceDefinition) (*apiextensionsv1.CustomResourceDefinition, error) {
+	out := crd.DeepCopy()
 	for _, el2 := range toadd.Spec.Versions {
 		exist := false
 		vacuum := false
-		for _, el1 := range crd.Spec.Versions {
+		for _, el1 := range out.Spec.Versions {
 			if el1.Name == el2.Name {
 				exist = true
 				break
 			}
 		}
-		for _, el1 := range crd.Spec.Versions {
+		for _, el1 := range out.Spec.Versions {
 			if el1.Name == VacuumVersionName {
 				vacuum = true
 				break
@@ -59,9 +62,9 @@ func AppendVersion(crd apiextensionsv1.CustomResourceDefinition, toadd apiextens
 		}
 
 		if !exist {
-			crd.Spec.Versions = append(crd.Spec.Versions, el2)
+			out.Spec.Versions = append(out.Spec.Versions, *el2.DeepCopy())
 			if !vacuum {
-				crd.Spec.Versions = append(crd.Spec.Versions, apiextensionsv1.CustomResourceDefinitionVersion{
+				out.Spec.Versions = append(out.Spec.Versions, apiextensionsv1.CustomResourceDefinitionVersion{
 					Name:    VacuumVersionName,
 					Served:  false,
 					Storage: true,
@@ -93,16 +96,16 @@ func AppendVersion(crd apiextensionsv1.CustomResourceDefinition, toadd apiextens
 					},
 				})
 			}
-			for i := range crd.Spec.Versions {
-				if crd.Spec.Versions[i].Name != VacuumVersionName {
-					crd.Spec.Versions[i].Served = true
-					crd.Spec.Versions[i].Storage = false
+			for i := range out.Spec.Versions {
+				if out.Spec.Versions[i].Name != VacuumVersionName {
+					out.Spec.Versions[i].Served = true
+					out.Spec.Versions[i].Storage = false
 				}
 			}
 		}
 	}
 
-	return &crd, nil
+	return out, nil
 }
 
 // RemoveStaleVersions removes the named non-vacuum versions from crd.Spec.Versions. The vacuum storage
