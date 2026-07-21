@@ -556,6 +556,12 @@ type RestDefinitionStatus struct {
 	// Cached here so Observe does not need to re-fetch the OAS document on every reconcile.
 	// +optional
 	HasSecuritySchemes *bool `json:"hasSecuritySchemes,omitempty"`
+
+	// OASHash: a content hash of the resolved OAS document at the last successful Create/Update. Observe
+	// re-hashes the referenced OAS each reconcile and treats a change as drift, so an edit to the OAS source
+	// (e.g. the referenced ConfigMap) is picked up even when oasPath itself is unchanged.
+	// +optional
+	OASHash string `json:"oasHash,omitempty"`
 }
 
 // +kubebuilder:object:root=true

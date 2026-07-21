@@ -2,6 +2,8 @@ package restdefinition
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -202,7 +204,7 @@ func (e *external) Observe(ctx context.Context, mg resource.Managed) (obs reconc
 		e.log.Debug("Using saved HasSecuritySchemes from status", "HasSecuritySchemes", hasSecuritySchemes)
 	} else {
 		hasSecuritySchemes = true // Safe default to true
-		doc, err := e.getDocumentModelFromCR(ctx, cr)
+		doc, _, err := e.getDocumentModelFromCR(ctx, cr)
 		if err != nil {
 			e.log.Debug("Failed to get document model from CR, defaulting HasSecuritySchemes to true", "error", err)
 		} else {
@@ -298,6 +300,21 @@ func (e *external) Observe(ctx context.Context, mg resource.Managed) (obs reconc
 		DryRunServer: true,
 	}
 
+	// An OAS content change (e.g. the referenced ConfigMap was edited) does not alter the render digest below
+	// — that digest depends only on the RD spec, not the OAS document — so detect it explicitly: hash the
+	// resolved OAS and treat a change vs the hash stored at the last Create/Update as drift, so Update
+	// regenerates the CRD. A transient fetch failure is NOT treated as drift, to avoid flapping when the OAS
+	// source is briefly unreachable.
+	if contents, ferr := e.fetchOASBytes(ctx, cr); ferr != nil {
+		e.log.Debug("Could not fetch OAS for content-drift check; skipping", "error", ferr)
+	} else if h := oasContentDigest(contents); cr.Status.OASHash != h {
+		e.log.Debug("OAS document content changed", "status", cr.Status.OASHash, "current", h)
+		return reconciler.ExternalObservation{
+			ResourceExists:   true,
+			ResourceUpToDate: false,
+		}, nil
+	}
+
 	dig, err := deploy.Deploy(ctx, e.kube, opts)
 	if err != nil {
 		return reconciler.ExternalObservation{}, err
@@ -357,7 +374,7 @@ func (e *external) Create(ctx context.Context, mg resource.Managed) (err error) 
 
 	e.log.Info("Creating RestDefinition", "Kind:", cr.Spec.Resource.Kind, "Group:", cr.Spec.ResourceGroup)
 
-	doc, err := e.getDocumentModelFromCR(ctx, cr)
+	doc, oasHash, err := e.getDocumentModelFromCR(ctx, cr)
 	if err != nil {
 		return fmt.Errorf("getting document model from CR: %w", err)
 	}
@@ -587,6 +604,7 @@ func (e *external) Create(ctx context.Context, mg resource.Managed) (err error) 
 	cr.Status.OASPath = cr.Spec.OASPath
 	cr.Status.Digest = dig
 	cr.Status.HasSecuritySchemes = &hasSecuritySchemes
+	cr.Status.OASHash = oasHash
 
 	err = e.kube.Status().Update(ctx, cr)
 	if err != nil {
@@ -614,7 +632,7 @@ func (e *external) Update(ctx context.Context, mg resource.Managed) (err error) 
 		attribute.String("oas.source", cr.Spec.OASPath),
 	)
 
-	doc, err := e.getDocumentModelFromCR(ctx, cr)
+	doc, oasHash, err := e.getDocumentModelFromCR(ctx, cr)
 	if err != nil {
 		return fmt.Errorf("getting document model from CR: %w", err)
 	}
@@ -671,6 +689,7 @@ func (e *external) Update(ctx context.Context, mg resource.Managed) (err error) 
 	cr.Status.OASPath = cr.Spec.OASPath
 	cr.Status.Digest = dig
 	cr.Status.HasSecuritySchemes = &hasSecuritySchemes
+	cr.Status.OASHash = oasHash
 
 	err = e.kube.Status().Update(ctx, cr)
 	if err != nil {
@@ -702,7 +721,7 @@ func (e *external) Delete(ctx context.Context, mg resource.Managed) (err error) 
 	// During a helm uninstall of a provider, the ConfigMap containing the OAS document might already be deleted
 	// when the RestDefinition is being deleted, causing an error when trying to get the document model from the CR.
 	hasSecuritySchemes := true
-	doc, err := e.getDocumentModelFromCR(ctx, cr)
+	doc, _, err := e.getDocumentModelFromCR(ctx, cr)
 	if err != nil {
 		e.log.Debug("Failed to get document model from CR", "error", err)
 		// Probably ConfigMap with OAS document is already deleted during a helm uninstall
@@ -834,8 +853,12 @@ func manageFinalizers(ctx context.Context, kubecli client.Client, cr *definition
 	return nil
 }
 
-func (e *external) getDocumentModelFromCR(ctx context.Context, cr *definitionv1alpha1.RestDefinition) (doc oas2jsonschema.OASDocument, err error) {
-	ctx, span := oteltelemetry.Tracer().Start(ctx, "restdefinition.parse_oas")
+// fetchOASBytes downloads the OAS document referenced by the CR's oasPath (configmap:// or http(s)://) and
+// returns its raw bytes. It uses a unique temp dir per call so concurrent reconciles never clobber each
+// other's download (the previous shared /tmp/ogen-provider dir was racy under >1 concurrent reconcile, and
+// Observe now fetches on every cycle for drift detection).
+func (e *external) fetchOASBytes(ctx context.Context, cr *definitionv1alpha1.RestDefinition) (contents []byte, err error) {
+	ctx, span := oteltelemetry.Tracer().Start(ctx, "restdefinition.fetch_oas")
 	defer span.End()
 	defer func() { oteltelemetry.RecordError(span, err) }()
 	OASPath := cr.Spec.OASPath
@@ -844,27 +867,49 @@ func (e *external) getDocumentModelFromCR(ctx context.Context, cr *definitionv1a
 		attribute.String("k8s.object.namespace", cr.Namespace),
 		attribute.String("oas.source", OASPath),
 	)
-	basePath := "/tmp/ogen-provider"
-	err = os.MkdirAll(basePath, os.ModePerm)
-	defer os.RemoveAll(basePath)
+	basePath, err := os.MkdirTemp("", "ogen-oas-")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create directory: %w", err)
 	}
+	defer os.RemoveAll(basePath)
 
-	filegetter := &filegetter.Filegetter{
+	fg := &filegetter.Filegetter{
 		Client:     http.DefaultClient,
 		KubeClient: e.kube,
 	}
-
-	err = filegetter.GetFile(ctx, path.Join(basePath, path.Base(OASPath)), OASPath, nil)
-	if err != nil {
+	dst := path.Join(basePath, path.Base(OASPath))
+	if err = fg.GetFile(ctx, dst, OASPath, nil); err != nil {
 		return nil, fmt.Errorf("failed to download file: %w", err)
 	}
-
-	contents, err := os.ReadFile(path.Join(basePath, path.Base(OASPath)))
+	contents, err = os.ReadFile(dst)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)
 	}
+	return contents, nil
+}
 
-	return e.parser.Parse(contents)
+// oasContentDigest is a stable content hash of the OAS document bytes. Observe compares it against
+// cr.Status.OASHash (set at the last Create/Update) so a change to the OAS source is detected as drift even
+// when oasPath itself is unchanged.
+func oasContentDigest(contents []byte) string {
+	sum := sha256.Sum256(contents)
+	return hex.EncodeToString(sum[:])
+}
+
+// getDocumentModelFromCR fetches and parses the CR's OAS document, also returning the content hash of the
+// exact bytes that were parsed (so callers store a hash consistent with what they generated from).
+func (e *external) getDocumentModelFromCR(ctx context.Context, cr *definitionv1alpha1.RestDefinition) (doc oas2jsonschema.OASDocument, oasHash string, err error) {
+	ctx, span := oteltelemetry.Tracer().Start(ctx, "restdefinition.parse_oas")
+	defer span.End()
+	defer func() { oteltelemetry.RecordError(span, err) }()
+
+	contents, err := e.fetchOASBytes(ctx, cr)
+	if err != nil {
+		return nil, "", err
+	}
+	doc, err = e.parser.Parse(contents)
+	if err != nil {
+		return nil, "", err
+	}
+	return doc, oasContentDigest(contents), nil
 }
