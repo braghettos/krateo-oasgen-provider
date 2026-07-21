@@ -77,7 +77,7 @@ func TestApplyOrUpdateCRD_Create(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(testScheme(t)).Build()
 	newcrd := genCRD("github.krateo.io", "PullRequest", "pullrequests", "v1-0-0", "A")
 
-	gvr, err := ApplyOrUpdateCRD(context.Background(), cli, newcrd)
+	gvr, err := ApplyOrUpdateCRD(context.Background(), cli, newcrd, "demo/rd")
 	require.NoError(t, err)
 	assert.Equal(t, schema.GroupVersionResource{Group: "github.krateo.io", Version: "v1-0-0", Resource: "pullrequests"}, gvr)
 
@@ -97,7 +97,7 @@ func TestApplyOrUpdateCRD_InPlaceBreaking(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(live).Build()
 
 	// re-apply v1-0-0 with a BREAKING new spec schema B
-	_, err := ApplyOrUpdateCRD(context.Background(), cli, genCRD("g", "K", "widgets", "v1-0-0", "B"))
+	_, err := ApplyOrUpdateCRD(context.Background(), cli, genCRD("g", "K", "widgets", "v1-0-0", "B"), "demo/rd")
 	require.NoError(t, err)
 
 	got, err := Get(context.Background(), cli, schema.GroupResource{Group: "g", Resource: "widgets"})
@@ -117,7 +117,7 @@ func TestApplyOrUpdateCRD_AppendNewVersion(t *testing.T) {
 	live := genCRD("g", "K", "widgets", "v1-0-0", "A")
 	cli := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(live).Build()
 
-	_, err := ApplyOrUpdateCRD(context.Background(), cli, genCRD("g", "K", "widgets", "v1-1-0", "B"))
+	_, err := ApplyOrUpdateCRD(context.Background(), cli, genCRD("g", "K", "widgets", "v1-1-0", "B"), "demo/rd")
 	require.NoError(t, err)
 
 	got, err := Get(context.Background(), cli, schema.GroupResource{Group: "g", Resource: "widgets"})
@@ -160,7 +160,7 @@ func TestApplyOrUpdateCRD_RetriesOnConflict(t *testing.T) {
 			},
 		}).Build()
 
-	_, err := ApplyOrUpdateCRD(context.Background(), cli, genCRD("g", "K", "widgets", "v1-0-0", "B"))
+	_, err := ApplyOrUpdateCRD(context.Background(), cli, genCRD("g", "K", "widgets", "v1-0-0", "B"), "demo/rd")
 	require.NoError(t, err, "conflict must be retried, not returned")
 	assert.GreaterOrEqual(t, updateCalls, 2, "first Update conflicted and the retry re-ran")
 
@@ -186,7 +186,7 @@ func TestApplyOrUpdateCRD_InPlaceKeepsSiblingVersion(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(live).Build()
 
 	// in-place update of v1-0-0 only
-	_, err := ApplyOrUpdateCRD(context.Background(), cli, genCRD("g", "K", "widgets", "v1-0-0", "A2"))
+	_, err := ApplyOrUpdateCRD(context.Background(), cli, genCRD("g", "K", "widgets", "v1-0-0", "A2"), "demo/rd")
 	require.NoError(t, err)
 
 	got, err := Get(context.Background(), cli, schema.GroupResource{Group: "g", Resource: "widgets"})
@@ -196,4 +196,41 @@ func TestApplyOrUpdateCRD_InPlaceKeepsSiblingVersion(t *testing.T) {
 	require.NotNil(t, sib, "sibling served version must survive the full-PUT apply")
 	assert.Equal(t, "B", specDesc(sib), "sibling schema untouched")
 	require.NotNil(t, findVer(got, generation.VacuumVersionName), "vacuum survives")
+}
+
+// The ownership guard: a CRD owned by one RestDefinition must not be modified by another (which would put two
+// RDCs on the same resource). A foreign owner is rejected with *ErrOwnershipConflict and the CRD is untouched.
+func TestApplyOrUpdateCRD_RejectsForeignOwner(t *testing.T) {
+	live := genCRD("g", "K", "widgets", "v1-0-0", "A")
+	live.Annotations = map[string]string{OwnerAnnotation: "demo/rd-a"}
+	cli := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(live).Build()
+
+	_, err := ApplyOrUpdateCRD(context.Background(), cli, genCRD("g", "K", "widgets", "v1-0-0", "B"), "demo/rd-b")
+	require.Error(t, err)
+	var conflict *ErrOwnershipConflict
+	require.ErrorAs(t, err, &conflict)
+	assert.Equal(t, "demo/rd-a", conflict.Owner)
+	assert.Equal(t, "demo/rd-b", conflict.Requester)
+
+	got, gerr := Get(context.Background(), cli, schema.GroupResource{Group: "g", Resource: "widgets"})
+	require.NoError(t, gerr)
+	assert.Equal(t, "A", specDesc(findVer(got, "v1-0-0")), "a foreign RestDefinition must not modify the CRD")
+	assert.Equal(t, "demo/rd-a", got.Annotations[OwnerAnnotation], "owner unchanged")
+}
+
+// Create stamps the owner; a pre-existing unowned CRD is adopted (owner stamped) and updated.
+func TestApplyOrUpdateCRD_CreateStampsOwnerAndAdoptsUnowned(t *testing.T) {
+	cli := fake.NewClientBuilder().WithScheme(testScheme(t)).Build()
+	_, err := ApplyOrUpdateCRD(context.Background(), cli, genCRD("g", "K", "widgets", "v1-0-0", "A"), "demo/rd-a")
+	require.NoError(t, err)
+	got, _ := Get(context.Background(), cli, schema.GroupResource{Group: "g", Resource: "widgets"})
+	assert.Equal(t, "demo/rd-a", got.Annotations[OwnerAnnotation], "create stamps the owner")
+
+	unowned := genCRD("g2", "K2", "gadgets", "v1-0-0", "A") // no owner annotation
+	cli2 := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(unowned).Build()
+	_, err = ApplyOrUpdateCRD(context.Background(), cli2, genCRD("g2", "K2", "gadgets", "v1-0-0", "B"), "demo/rd-b")
+	require.NoError(t, err, "an unowned CRD is adopted")
+	got2, _ := Get(context.Background(), cli2, schema.GroupResource{Group: "g2", Resource: "gadgets"})
+	assert.Equal(t, "demo/rd-b", got2.Annotations[OwnerAnnotation], "unowned CRD adopted + stamped")
+	assert.Equal(t, "B", specDesc(findVer(got2, "v1-0-0")), "in-place update applied on adopt")
 }
