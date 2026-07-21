@@ -159,6 +159,31 @@ type external struct {
 	parser oas2jsonschema.Parser
 }
 
+// targetVersion is the CRD API version derived from the OAS document's info.version (normalized to a legal
+// k8s version name via crdgen), falling back to resourceVersion ("v1alpha1") when the OAS is unavailable or
+// declares no version. Used by Create/Update/Delete, which have the parsed OAS in hand.
+func targetVersion(doc oas2jsonschema.OASDocument) string {
+	if doc != nil {
+		if v := crdgen.NormalizeVersionName(doc.Version()); v != "" {
+			return v
+		}
+	}
+	return resourceVersion
+}
+
+// observedVersion is the currently-deployed CRD API version, read from status (set at the last Create/Update),
+// falling back to resourceVersion before the first Create. Used by Observe and finalizer handling, which must
+// look at the version that actually exists on the cluster rather than re-deriving from the (possibly bumped)
+// OAS — a version bump is detected via the OAS content hash and reconciled (append + redeploy) by Update.
+func observedVersion(cr *definitionv1alpha1.RestDefinition) string {
+	if cr.Status.Resource.APIVersion != "" {
+		if gv, gerr := schema.ParseGroupVersion(cr.Status.Resource.APIVersion); gerr == nil && gv.Version != "" {
+			return gv.Version
+		}
+	}
+	return resourceVersion
+}
+
 func (e *external) Observe(ctx context.Context, mg resource.Managed) (obs reconciler.ExternalObservation, err error) {
 	cr, ok := mg.(*definitionv1alpha1.RestDefinition)
 	if !ok {
@@ -176,7 +201,7 @@ func (e *external) Observe(ctx context.Context, mg resource.Managed) (obs reconc
 
 	gvk := schema.GroupVersionKind{
 		Group:   cr.Spec.ResourceGroup,
-		Version: resourceVersion,
+		Version: observedVersion(cr),
 		Kind:    text.CapitaliseFirstLetter(cr.Spec.Resource.Kind),
 	}
 
@@ -392,7 +417,7 @@ func (e *external) Create(ctx context.Context, mg resource.Managed) (err error) 
 
 	gvk := schema.GroupVersionKind{
 		Group:   cr.Spec.ResourceGroup,
-		Version: resourceVersion,
+		Version: targetVersion(doc),
 		Kind:    text.CapitaliseFirstLetter(cr.Spec.Resource.Kind),
 	}
 	gvr := plurals.ToGroupVersionResource(gvk)
@@ -610,7 +635,7 @@ func (e *external) Update(ctx context.Context, mg resource.Managed) (err error) 
 
 	gvk := schema.GroupVersionKind{
 		Group:   cr.Spec.ResourceGroup,
-		Version: resourceVersion,
+		Version: targetVersion(doc),
 		Kind:    text.CapitaliseFirstLetter(cr.Spec.Resource.Kind),
 	}
 	gvr := plurals.ToGroupVersionResource(gvk)
@@ -713,7 +738,7 @@ func (e *external) Delete(ctx context.Context, mg resource.Managed) (err error) 
 
 	gvr := plurals.ToGroupVersionResource(schema.GroupVersionKind{
 		Group:   cr.Spec.ResourceGroup,
-		Version: resourceVersion,
+		Version: targetVersion(doc),
 		Kind:    text.CapitaliseFirstLetter(cr.Spec.Resource.Kind),
 	})
 
@@ -773,10 +798,11 @@ func getConfigurationGVK(cr *definitionv1alpha1.RestDefinition) schema.GroupVers
 func manageFinalizers(ctx context.Context, kubecli client.Client, cr *definitionv1alpha1.RestDefinition, log func(msg string, keysAndValues ...any)) error {
 	log("Managing finalizers for RestDefinition", "name", cr.Name, "namespace", cr.Namespace)
 
-	// Check if RestResources still exist for this RestDefinition
+	// Check if RestResources still exist for this RestDefinition. Use the deployed version (from status): the
+	// apiserver serves all instances through any served version, and this one is guaranteed to exist on the CRD.
 	gvk := schema.GroupVersionKind{
 		Group:   cr.Spec.ResourceGroup,
-		Version: resourceVersion,
+		Version: observedVersion(cr),
 		Kind:    text.CapitaliseFirstLetter(cr.Spec.Resource.Kind),
 	}
 
@@ -790,7 +816,7 @@ func manageFinalizers(ctx context.Context, kubecli client.Client, cr *definition
 			log("CRD not found, treating as no resources exist",
 				"Group", cr.Spec.ResourceGroup,
 				"Kind", cr.Spec.Resource.Kind,
-				"Version", resourceVersion,
+				"Version", observedVersion(cr),
 				"error", err.Error())
 			uli.Items = nil
 			err = nil

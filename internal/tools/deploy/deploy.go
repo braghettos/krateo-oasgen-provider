@@ -21,6 +21,9 @@ import (
 
 const (
 	ControllerResourceSuffix = "-controller"
+	// rbacVersion is the fixed version used to NAME the RDC RBAC objects, decoupling them from the target CRD
+	// version so a version bump neither orphans nor duplicates the RBAC set. Rules are version-independent.
+	rbacVersion              = "v1alpha1"
 	ConfigmapResourceSuffix  = "-configmap"
 )
 
@@ -62,8 +65,16 @@ func createRBACResources(gvr schema.GroupVersionResource, rbacNSName types.Names
 		Name:      rbacNSName.Name + ControllerResourceSuffix,
 	}
 
+	// RBAC objects are named "<resource>-<version>" by the templates, but their RULES grant on group+resource
+	// (not on a specific version). Render them with a STABLE version so the names do not change when the target
+	// CRD version is bumped — otherwise each bump would orphan the previous version's RBAC set (including the
+	// cluster-scoped ClusterRole/ClusterRoleBinding), and a teardown with the OAS already gone (version falls
+	// back) would silently fail to delete the real, derived-version-named RBAC. rbacVersion keeps names
+	// backward-compatible with RBAC created before version derivation.
+	rbacGVR := schema.GroupVersionResource{Group: gvr.Group, Version: rbacVersion, Resource: gvr.Resource}
+
 	sa := corev1.ServiceAccount{}
-	err := templates.CreateK8sObject(&sa, gvr, rbacNSName, path.Join(rbacFolderPath, "serviceaccount.yaml"))
+	err := templates.CreateK8sObject(&sa, rbacGVR, rbacNSName, path.Join(rbacFolderPath, "serviceaccount.yaml"))
 	if err != nil {
 		return corev1.ServiceAccount{}, rbacv1.ClusterRole{}, rbacv1.ClusterRoleBinding{}, rbacv1.Role{}, rbacv1.RoleBinding{}, err
 	}
@@ -74,28 +85,28 @@ func createRBACResources(gvr schema.GroupVersionResource, rbacNSName types.Names
 		//fmt.Printf("Configuration GVR found: %s\n", configuration)
 	}
 	clusterrole := rbacv1.ClusterRole{}
-	err = templates.CreateK8sObject(&clusterrole, gvr, rbacNSName, path.Join(rbacFolderPath, "clusterrole.yaml"), "configuration", configuration)
+	err = templates.CreateK8sObject(&clusterrole, rbacGVR, rbacNSName, path.Join(rbacFolderPath, "clusterrole.yaml"), "configuration", configuration)
 	if err != nil {
 		return corev1.ServiceAccount{}, rbacv1.ClusterRole{}, rbacv1.ClusterRoleBinding{}, rbacv1.Role{}, rbacv1.RoleBinding{}, err
 	}
 	//fmt.Printf("ClusterRole created with name: %s, namespace: %s, rules: %+v\n", clusterrole.Name, clusterrole.Namespace, clusterrole.Rules)
 
 	clusterrolebinding := rbacv1.ClusterRoleBinding{}
-	err = templates.CreateK8sObject(&clusterrolebinding, gvr, rbacNSName, path.Join(rbacFolderPath, "clusterrolebinding.yaml"), "serviceAccount", sa.Name, "saNamespace", sa.Namespace)
+	err = templates.CreateK8sObject(&clusterrolebinding, rbacGVR, rbacNSName, path.Join(rbacFolderPath, "clusterrolebinding.yaml"), "serviceAccount", sa.Name, "saNamespace", sa.Namespace)
 	if err != nil {
 		return corev1.ServiceAccount{}, rbacv1.ClusterRole{}, rbacv1.ClusterRoleBinding{}, rbacv1.Role{}, rbacv1.RoleBinding{}, err
 	}
 	//fmt.Printf("ClusterRoleBinding created with name: %s, namespace: %s, subjects: %+v, roleRef: %+v\n", clusterrolebinding.Name, clusterrolebinding.Namespace, clusterrolebinding.Subjects, clusterrolebinding.RoleRef)
 
 	role := rbacv1.Role{}
-	err = templates.CreateK8sObject(&role, gvr, rbacNSName, path.Join(rbacFolderPath, "role.yaml"))
+	err = templates.CreateK8sObject(&role, rbacGVR, rbacNSName, path.Join(rbacFolderPath, "role.yaml"))
 	if err != nil {
 		return corev1.ServiceAccount{}, rbacv1.ClusterRole{}, rbacv1.ClusterRoleBinding{}, rbacv1.Role{}, rbacv1.RoleBinding{}, err
 	}
 	//fmt.Printf("Role created with name: %s, namespace: %s, rules: %+v\n", role.Name, role.Namespace, role.Rules)
 
 	rolebinding := rbacv1.RoleBinding{}
-	err = templates.CreateK8sObject(&rolebinding, gvr, rbacNSName, path.Join(rbacFolderPath, "rolebinding.yaml"), "serviceAccount", sa.Name, "saNamespace", sa.Namespace)
+	err = templates.CreateK8sObject(&rolebinding, rbacGVR, rbacNSName, path.Join(rbacFolderPath, "rolebinding.yaml"), "serviceAccount", sa.Name, "saNamespace", sa.Namespace)
 	if err != nil {
 		return corev1.ServiceAccount{}, rbacv1.ClusterRole{}, rbacv1.ClusterRoleBinding{}, rbacv1.Role{}, rbacv1.RoleBinding{}, err
 	}
