@@ -2,16 +2,20 @@ package crd
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/krateoplatformops/oasgen-provider/internal/tools/crd/generation"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func testScheme(t *testing.T) *runtime.Scheme {
@@ -132,6 +136,38 @@ func TestApplyOrUpdateCRD_AppendNewVersion(t *testing.T) {
 	}
 	require.NotNil(t, got.Spec.Conversion)
 	assert.Equal(t, apiextensionsv1.NoneConverter, got.Spec.Conversion.Strategy)
+}
+
+// The merge path uses optimistic concurrency: a conflicting Update must be retried (re-read + re-merge),
+// not surfaced as an error. Inject a 409 on the first Update and assert ApplyOrUpdateCRD still succeeds and
+// the change lands, with the vacuum preserved across the retry.
+func TestApplyOrUpdateCRD_RetriesOnConflict(t *testing.T) {
+	live := genCRD("g", "K", "widgets", "v1-0-0", "A")
+	live.Spec.Versions[0].Storage = false
+	live.Spec.Versions = append(live.Spec.Versions, vacuum(generation.VacuumVersionName))
+
+	updateCalls := 0
+	cli := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(live).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+				updateCalls++
+				if updateCalls == 1 {
+					return apierrors.NewConflict(
+						schema.GroupResource{Group: "apiextensions.k8s.io", Resource: "customresourcedefinitions"},
+						obj.GetName(), fmt.Errorf("simulated conflict"))
+				}
+				return c.Update(ctx, obj, opts...)
+			},
+		}).Build()
+
+	_, err := ApplyOrUpdateCRD(context.Background(), cli, genCRD("g", "K", "widgets", "v1-0-0", "B"))
+	require.NoError(t, err, "conflict must be retried, not returned")
+	assert.GreaterOrEqual(t, updateCalls, 2, "first Update conflicted and the retry re-ran")
+
+	got, err := Get(context.Background(), cli, schema.GroupResource{Group: "g", Resource: "widgets"})
+	require.NoError(t, err)
+	assert.Equal(t, "B", specDesc(findVer(got, "v1-0-0")), "in-place change applied after the retry")
+	require.NotNil(t, findVer(got, generation.VacuumVersionName), "vacuum preserved through the retry")
 }
 
 // Regression guard for the original clobber bug: a full-PUT apply must not drop a sibling served version.
