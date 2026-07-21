@@ -26,6 +26,7 @@ func (m *mockPathItem) GetOperations() map[string]Operation { return m.Ops }
 type mockOASDocument struct {
 	Paths           map[string]*mockPathItem
 	securitySchemes []SecuritySchemeInfo
+	version         string
 }
 
 func (m *mockOASDocument) FindPath(path string) (PathItem, bool) {
@@ -35,4 +36,8 @@ func (m *mockOASDocument) FindPath(path string) (PathItem, bool) {
 
 func (m *mockOASDocument) SecuritySchemes() []SecuritySchemeInfo {
 	return m.securitySchemes
+}
+
+func (m *mockOASDocument) Version() string {
+	return m.version
 }

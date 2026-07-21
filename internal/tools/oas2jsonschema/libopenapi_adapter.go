@@ -91,6 +91,13 @@ func (a *libOASDocumentAdapter) FindPath(path string) (PathItem, bool) {
 	return &libOASPathItemAdapter{path: p}, true
 }
 
+func (a *libOASDocumentAdapter) Version() string {
+	if a.doc.Model.Info == nil {
+		return ""
+	}
+	return a.doc.Model.Info.Version
+}
+
 func (a *libOASDocumentAdapter) SecuritySchemes() []SecuritySchemeInfo {
 	if a.doc.Model.Components == nil || a.doc.Model.Components.SecuritySchemes == nil {
 		return nil
