@@ -121,4 +121,4 @@ require (
 
 replace github.com/pb33f/libopenapi => github.com/krateoplatformops/libopenapi v0.21.8
 
-replace github.com/krateoplatformops/plumbing => github.com/braghettos/plumbing v1.6.2
+replace github.com/krateoplatformops/plumbing => github.com/braghettos/plumbing v1.6.3
