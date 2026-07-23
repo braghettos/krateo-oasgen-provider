@@ -464,6 +464,15 @@ func (e *external) Create(ctx context.Context, mg resource.Managed) (err error) 
 		return fmt.Errorf("installing controller: %w", err)
 	}
 
+	// Prune served versions superseded by this one that are safe to drop without migrating any instance
+	// (not current, not vacuum, not in storedVersions) — bounds version accumulation from repeated bumps.
+	// Best-effort: a prune failure must not fail the reconcile.
+	if pruned, perr := crd.PruneServedVersions(ctx, e.kube, gvr.GroupResource(), gvk.Version); perr != nil {
+		e.log.Debug("Pruning superseded served versions failed (non-fatal)", "error", perr)
+	} else if len(pruned) > 0 {
+		e.log.Debug("Pruned superseded served versions", "versions", pruned)
+	}
+
 	cr.SetConditions(rtv1.Creating())
 	cr.Status.Resource = definitionv1alpha1.KindApiVersion{
 		Kind:       gvk.Kind,
@@ -668,6 +677,15 @@ func (e *external) Update(ctx context.Context, mg resource.Managed) (err error) 
 	dig, err := deploy.Deploy(ctx, e.kube, opts)
 	if err != nil {
 		return fmt.Errorf("installing controller: %w", err)
+	}
+
+	// Prune served versions superseded by this one that are safe to drop without migrating any instance
+	// (not current, not vacuum, not in storedVersions) — bounds version accumulation from repeated bumps.
+	// Best-effort: a prune failure must not fail the reconcile.
+	if pruned, perr := crd.PruneServedVersions(ctx, e.kube, gvr.GroupResource(), gvk.Version); perr != nil {
+		e.log.Debug("Pruning superseded served versions failed (non-fatal)", "error", perr)
+	} else if len(pruned) > 0 {
+		e.log.Debug("Pruned superseded served versions", "versions", pruned)
 	}
 
 	cr.SetConditions(rtv1.Creating())
