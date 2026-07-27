@@ -681,6 +681,75 @@ spec:
                                   CR-domain shape.
                                   Only one of 'inPath', 'inQuery', 'inBody' or 'inResponse' can be set.
                                 type: string
+                              resolver:
+                                description: |-
+                                  Resolver, when set, sources the field's value from something other than a literal read of
+                                  inCustomResource: an apiLookup call (resolve an alias to an id via another call in this
+                                  RestDefinition) or a secretRef (substitute a Kubernetes Secret's value). Applied BEFORE
+                                  valueMapping, so a resolved value may still be alias/jq-transformed afterward. Valid only on
+                                  request-direction entries (inPath/inQuery/inBody set).
+                                properties:
+                                  apiLookup:
+                                    description: |-
+                                      ApiLookup resolves an alias on the Custom Resource into an id via a call in the SAME RestDefinition's
+                                      OAS document (used when type is 'apiLookup').
+                                    properties:
+                                      action:
+                                        description: Action is the VerbsDescription.Action,
+                                          in this RestDefinition, to call in order
+                                          to resolve the alias.
+                                        type: string
+                                      requestParam:
+                                        description: RequestParam is the path or query
+                                          parameter on the lookup call that receives
+                                          the alias value.
+                                        type: string
+                                      responsePath:
+                                        description: ResponsePath is the JSONPath
+                                          into the lookup call's response body that
+                                          yields the resolved value.
+                                        type: string
+                                    required:
+                                    - action
+                                    - requestParam
+                                    - responsePath
+                                    type: object
+                                  secretRef:
+                                    description: |-
+                                      SecretRef substitutes a Kubernetes Secret's value for the field (used when type is 'secretRef'). The
+                                      Secret is always read from the Custom Resource instance's own namespace — there is no field to name a
+                                      different one.
+                                    properties:
+                                      keyFromCustomResource:
+                                        description: KeyFromCustomResource is a JSONPath
+                                          into the Custom Resource yielding the key
+                                          within the Secret's data.
+                                        type: string
+                                      nameFromCustomResource:
+                                        description: NameFromCustomResource is a JSONPath
+                                          into the Custom Resource yielding the Secret's
+                                          name.
+                                        type: string
+                                    required:
+                                    - keyFromCustomResource
+                                    - nameFromCustomResource
+                                    type: object
+                                  type:
+                                    description: Type selects the resolver kind.
+                                    enum:
+                                    - apiLookup
+                                    - secretRef
+                                    type: string
+                                required:
+                                - type
+                                type: object
+                                x-kubernetes-validations:
+                                - message: apiLookup must be set when type is 'apiLookup'
+                                  rule: 'self.type == ''apiLookup'' ? has(self.apiLookup)
+                                    : true'
+                                - message: secretRef must be set when type is 'secretRef'
+                                  rule: 'self.type == ''secretRef'' ? has(self.secretRef)
+                                    : true'
                               valueMapping:
                                 description: ValueMapping optionally transforms the
                                   value as it crosses the CR<->API boundary.
@@ -760,6 +829,10 @@ spec:
                                 must be set
                               rule: (has(self.inPath)?1:0)+(has(self.inQuery)?1:0)+(has(self.inBody)?1:0)+(has(self.inResponse)?1:0)
                                 == 1
+                            - message: resolver is only valid on a request-direction
+                                entry (inPath, inQuery or inBody)
+                              rule: '!has(self.resolver) || has(self.inPath) || has(self.inQuery)
+                                || has(self.inBody)'
                           type: array
                         headers:
                           description: |-

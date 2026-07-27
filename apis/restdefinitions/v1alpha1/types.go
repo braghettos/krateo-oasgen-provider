@@ -103,6 +103,7 @@ type RequestFieldMappingItem struct {
 // Exactly one API-side anchor must be set. The anchor kind implies the direction:
 // inPath/inQuery/inBody => request, inResponse => response.
 // +kubebuilder:validation:XValidation:rule="(has(self.inPath)?1:0)+(has(self.inQuery)?1:0)+(has(self.inBody)?1:0)+(has(self.inResponse)?1:0) == 1",message="exactly one of inPath, inQuery, inBody or inResponse must be set"
+// +kubebuilder:validation:XValidation:rule="!has(self.resolver) || has(self.inPath) || has(self.inQuery) || has(self.inBody)",message="resolver is only valid on a request-direction entry (inPath, inQuery or inBody)"
 type FieldMappingItem struct {
 	// InPath selects a REQUEST path parameter (request direction).
 	// Only one of 'inPath', 'inQuery', 'inBody' or 'inResponse' can be set.
@@ -131,6 +132,13 @@ type FieldMappingItem struct {
 	// ValueMapping optionally transforms the value as it crosses the CR<->API boundary.
 	// +optional
 	ValueMapping *ValueMapping `json:"valueMapping,omitempty"`
+	// Resolver, when set, sources the field's value from something other than a literal read of
+	// inCustomResource: an apiLookup call (resolve an alias to an id via another call in this
+	// RestDefinition) or a secretRef (substitute a Kubernetes Secret's value). Applied BEFORE
+	// valueMapping, so a resolved value may still be alias/jq-transformed afterward. Valid only on
+	// request-direction entries (inPath/inQuery/inBody set).
+	// +optional
+	Resolver *FieldResolver `json:"resolver,omitempty"`
 	// DefaultIfAbsent, for a response entry (inResponse), supplies the value to inject at the CR-domain
 	// destination when the API omits the source field entirely. This canonicalizes an absent field into a
 	// known default so status population and drift comparison converge — e.g. an API that omits a boolean
@@ -140,6 +148,52 @@ type FieldMappingItem struct {
 	// +kubebuilder:validation:Schemaless
 	// +kubebuilder:pruning:PreserveUnknownFields
 	DefaultIfAbsent *apiextensionsv1.JSON `json:"defaultIfAbsent,omitempty"`
+}
+
+// FieldResolver is the shared primitive behind issues #30 (apiLookup) and #31 (secretRef): exactly one of
+// apiLookup or secretRef is set, matching type.
+// +kubebuilder:validation:XValidation:rule="self.type == 'apiLookup' ? has(self.apiLookup) : true",message="apiLookup must be set when type is 'apiLookup'"
+// +kubebuilder:validation:XValidation:rule="self.type == 'secretRef' ? has(self.secretRef) : true",message="secretRef must be set when type is 'secretRef'"
+type FieldResolver struct {
+	// Type selects the resolver kind.
+	// +kubebuilder:validation:Enum=apiLookup;secretRef
+	// +required
+	Type string `json:"type"`
+	// ApiLookup resolves an alias on the Custom Resource into an id via a call in the SAME RestDefinition's
+	// OAS document (used when type is 'apiLookup').
+	// +optional
+	ApiLookup *APILookupResolver `json:"apiLookup,omitempty"`
+	// SecretRef substitutes a Kubernetes Secret's value for the field (used when type is 'secretRef'). The
+	// Secret is always read from the Custom Resource instance's own namespace — there is no field to name a
+	// different one.
+	// +optional
+	SecretRef *SecretRefResolver `json:"secretRef,omitempty"`
+}
+
+// APILookupResolver resolves a Custom Resource alias into an id by calling another action (e.g. 'findby')
+// declared in the same RestDefinition's OAS document, and reading the result out of that call's response.
+type APILookupResolver struct {
+	// Action is the VerbsDescription.Action, in this RestDefinition, to call in order to resolve the alias.
+	// +required
+	Action string `json:"action"`
+	// RequestParam is the path or query parameter on the lookup call that receives the alias value.
+	// +required
+	RequestParam string `json:"requestParam"`
+	// ResponsePath is the JSONPath into the lookup call's response body that yields the resolved value.
+	// +required
+	ResponsePath string `json:"responsePath"`
+}
+
+// SecretRefResolver substitutes a Kubernetes Secret's value for the field. The Secret is always read from
+// the Custom Resource instance's own namespace (no namespace field is exposed, by design: this forecloses
+// a cross-namespace secret reference at the type level rather than relying on a runtime check).
+type SecretRefResolver struct {
+	// NameFromCustomResource is a JSONPath into the Custom Resource yielding the Secret's name.
+	// +required
+	NameFromCustomResource string `json:"nameFromCustomResource"`
+	// KeyFromCustomResource is a JSONPath into the Custom Resource yielding the key within the Secret's data.
+	// +required
+	KeyFromCustomResource string `json:"keyFromCustomResource"`
 }
 
 // ValueMapping declares a value transform applied to a FieldMappingItem. Exactly one tier is configured:

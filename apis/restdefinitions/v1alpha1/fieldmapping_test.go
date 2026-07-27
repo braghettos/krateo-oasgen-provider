@@ -120,3 +120,102 @@ func TestFieldMapping_DeepCopyIndependence(t *testing.T) {
 		rd.Spec.Resource.VerbsDescription[0].ResponseTransform.Inline,
 		"deepcopy must not share the JQProgram pointer with the original")
 }
+
+// sampleVerbWithResolvers builds a "create" verb exercising both FieldResolver kinds on request-direction
+// entries: an apiLookup (resolve an alias to an id via another action) and a secretRef (substitute a
+// Secret's value), per issues #30/#31.
+func sampleVerbWithResolvers() VerbsDescription {
+	return VerbsDescription{
+		Action: "create",
+		Method: "POST",
+		Path:   "/orgs/{org}/teams",
+		FieldMapping: []FieldMappingItem{
+			{
+				InBody:           "team_id",
+				InCustomResource: "spec.teamAlias",
+				Resolver: &FieldResolver{
+					Type: "apiLookup",
+					ApiLookup: &APILookupResolver{
+						Action:       "findby",
+						RequestParam: "slug",
+						ResponsePath: "id",
+					},
+				},
+			},
+			{
+				InBody:           "token",
+				InCustomResource: "spec.credentialsRef",
+				Resolver: &FieldResolver{
+					Type: "secretRef",
+					SecretRef: &SecretRefResolver{
+						NameFromCustomResource: "spec.credentialsRef.name",
+						KeyFromCustomResource:  "spec.credentialsRef.key",
+					},
+				},
+			},
+		},
+	}
+}
+
+// TestFieldResolver_JSONRoundTrip asserts FieldResolver (both apiLookup and secretRef kinds) serializes
+// with the expected JSON keys and survives a marshal/unmarshal round-trip unchanged.
+func TestFieldResolver_JSONRoundTrip(t *testing.T) {
+	vd := sampleVerbWithResolvers()
+
+	raw, err := json.Marshal(vd)
+	require.NoError(t, err)
+
+	for _, key := range []string{
+		`"resolver"`, `"type":"apiLookup"`, `"apiLookup"`, `"action"`, `"requestParam"`, `"responsePath"`,
+		`"type":"secretRef"`, `"secretRef"`, `"nameFromCustomResource"`, `"keyFromCustomResource"`,
+	} {
+		assert.Containsf(t, string(raw), key, "expected JSON to contain key %s", key)
+	}
+
+	var back VerbsDescription
+	require.NoError(t, json.Unmarshal(raw, &back))
+	assert.Equal(t, vd, back, "VerbsDescription with resolvers must survive a JSON round-trip unchanged")
+}
+
+// TestFieldResolver_OmitEmpty guarantees a FieldMappingItem with no resolver never emits the resolver key.
+func TestFieldResolver_OmitEmpty(t *testing.T) {
+	noResolver := VerbsDescription{
+		Action: "create",
+		Method: "POST",
+		Path:   "/things",
+		FieldMapping: []FieldMappingItem{
+			{InBody: "name", InCustomResource: "spec.name"},
+		},
+	}
+	raw, err := json.Marshal(noResolver)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), `"resolver"`)
+}
+
+// TestFieldResolver_DeepCopyIndependence exercises the generated deepcopy for FieldResolver and its two
+// resolver kinds: mutating a deep copy must never leak back into the original.
+func TestFieldResolver_DeepCopyIndependence(t *testing.T) {
+	rd := &RestDefinition{
+		Spec: RestDefinitionSpec{
+			OASPath:       "https://example.com/oas.yaml",
+			ResourceGroup: "example.kog.krateo.io",
+			Resource: Resource{
+				Kind:             "Team",
+				VerbsDescription: []VerbsDescription{sampleVerbWithResolvers()},
+			},
+		},
+	}
+
+	cp := rd.DeepCopy()
+	require.NotSame(t, rd, cp)
+
+	cp.Spec.Resource.VerbsDescription[0].FieldMapping[0].Resolver.ApiLookup.Action = "MUTATED"
+	cp.Spec.Resource.VerbsDescription[0].FieldMapping[1].Resolver.SecretRef.KeyFromCustomResource = "MUTATED"
+
+	assert.Equal(t, "findby",
+		rd.Spec.Resource.VerbsDescription[0].FieldMapping[0].Resolver.ApiLookup.Action,
+		"deepcopy must not share the APILookupResolver pointer with the original")
+	assert.Equal(t, "spec.credentialsRef.key",
+		rd.Spec.Resource.VerbsDescription[0].FieldMapping[1].Resolver.SecretRef.KeyFromCustomResource,
+		"deepcopy must not share the SecretRefResolver pointer with the original")
+}
