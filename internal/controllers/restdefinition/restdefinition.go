@@ -16,6 +16,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 
 	"github.com/krateoplatformops/plumbing/env"
+	"github.com/krateoplatformops/plumbing/kubeutil/dynamicwatch"
 	"github.com/krateoplatformops/plumbing/kubeutil/event"
 	"github.com/krateoplatformops/plumbing/kubeutil/eventrecorder"
 	rtv1 "github.com/krateoplatformops/provider-runtime/apis/common/v1"
@@ -33,6 +34,9 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	crcontroller "sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/krateoplatformops/oasgen-provider/internal/tools/crd"
 	"github.com/krateoplatformops/oasgen-provider/internal/tools/deploy"
@@ -98,15 +102,18 @@ func Setup(mgr ctrl.Manager, o controller.Options, metrics reconciler.MetricsRec
 		return fmt.Errorf("failed to create discovery client: %w", err)
 	}
 
+	conn := &connector{
+		kube:     cli,
+		log:      log,
+		recorder: recorder,
+		disc:     discovery,
+		parser:   oas2jsonschema.NewLibOASParser(),
+		cfgWatch: dynamicwatch.NewRegistry(mgr.GetCache()),
+	}
+
 	r := reconciler.NewReconciler(mgr,
 		resource.ManagedKind(definitionv1alpha1.RestDefinitionGroupVersionKind),
-		reconciler.WithExternalConnecter(&connector{
-			kube:     cli,
-			log:      log,
-			recorder: recorder,
-			disc:     discovery,
-			parser:   oas2jsonschema.NewLibOASParser(),
-		}),
+		reconciler.WithExternalConnecter(conn),
 		reconciler.WithTimeout(reconcileTimeout),
 		reconciler.WithCreationGracePeriod(reconcileGracePeriod),
 		reconciler.WithPollInterval(o.PollInterval),
@@ -114,11 +121,21 @@ func Setup(mgr ctrl.Manager, o controller.Options, metrics reconciler.MetricsRec
 		reconciler.WithMetrics(metrics),
 		reconciler.WithRecorder(event.NewAPIRecorder(apiRecorder)))
 
-	return ctrl.NewControllerManagedBy(mgr).
+	// Build (not Complete) so the controller handle is captured: a Configuration Kind is generated at
+	// runtime by THIS controller (generateAndApplyCRDs), so a dynamic watch on it can only be registered
+	// once a RestDefinition has reconciled at least once — see ensureConfigurationWatch, called from
+	// Create/Update. Watch is documented safe to call after the manager/controller has started.
+	c, err := ctrl.NewControllerManagedBy(mgr).
 		Named(name).
 		WithOptions(o.ForControllerRuntime()).
 		For(&definitionv1alpha1.RestDefinition{}).
-		Complete(ratelimiter.New(name, r, o.GlobalRateLimiter))
+		Build(ratelimiter.New(name, r, o.GlobalRateLimiter))
+	if err != nil {
+		return err
+	}
+	conn.ctrl = c
+
+	return nil
 }
 
 type connector struct {
@@ -127,6 +144,12 @@ type connector struct {
 	recorder record.EventRecorder
 	disc     discovery.DiscoveryInterface
 	parser   oas2jsonschema.Parser
+	// cfgWatch and ctrl back the dynamic per-Configuration-Kind watch (see ensureConfigurationWatch):
+	// cfgWatch dedupes registration across reconciles (of possibly many different RestDefinitions, each
+	// with its own generated Configuration Kind); ctrl is the handle Watch is called on, captured from
+	// Build in Setup once the controller exists.
+	cfgWatch *dynamicwatch.Registry
+	ctrl     crcontroller.Controller
 }
 
 func (c *connector) Connect(ctx context.Context, mg resource.Managed) (reconciler.ExternalClient, error) {
@@ -141,22 +164,72 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (reconcile
 	log := c.log.WithValues("name", cr.Name, "namespace", cr.Namespace)
 
 	return &external{
-		kube:   c.kube,
-		log:    log,
-		rec:    c.recorder,
-		disc:   c.disc,
-		parser: c.parser,
+		kube:     c.kube,
+		log:      log,
+		rec:      c.recorder,
+		disc:     c.disc,
+		parser:   c.parser,
+		cfgWatch: c.cfgWatch,
+		ctrl:     c.ctrl,
 	}, nil
 }
 
 // An ExternalClient observes, then either creates, updates, or deletes an
 // external resource to ensure it reflects the managed resource's desired state.
 type external struct {
-	kube   client.Client
-	log    logging.Logger
-	rec    record.EventRecorder
-	disc   discovery.DiscoveryInterface
-	parser oas2jsonschema.Parser
+	kube     client.Client
+	log      logging.Logger
+	rec      record.EventRecorder
+	disc     discovery.DiscoveryInterface
+	parser   oas2jsonschema.Parser
+	cfgWatch *dynamicwatch.Registry
+	ctrl     crcontroller.Controller
+}
+
+// ensureConfigurationWatch registers a watch on cr's generated Configuration Kind the first time it is
+// seen (cfgWatch dedupes), so a Configuration instance change (a new/changed usernameRef/passwordRef/
+// tokenRef, or an instance appearing/disappearing) enqueues cr immediately instead of waiting for the next
+// resync — the auth-secret RBAC drift check in Observe then does the actual re-sync. Best-effort: if the
+// Configuration Kind is not yet discoverable (its CRD was only just applied), the periodic resync still
+// drives the resync-based baseline, and the next Create/Update reconcile retries registration.
+//
+// There is no corresponding "unwatch": controller-runtime has no primitive to remove a registered source
+// from a running controller (the same limitation and tradeoff documented on core-provider's
+// compositionmirror.go, which this mechanism is modeled on). A watch on a Configuration Kind whose
+// RestDefinition is later deleted is harmless (its informer idles) but is never released for the life of
+// the process.
+func (e *external) ensureConfigurationWatch(cr *definitionv1alpha1.RestDefinition) {
+	if e.ctrl == nil || e.cfgWatch == nil {
+		return // not wired for dynamic watches (e.g. under unit tests)
+	}
+	cfgGVK := getConfigurationGVK(cr)
+	if err := e.cfgWatch.EnsureWatch(e.ctrl, cfgGVK, enqueueRestDefinitionForConfiguration(e.kube)); err != nil {
+		e.log.Debug("Dynamic watch registration on Configuration Kind deferred", "gvk", cfgGVK.String(), "error", err)
+	}
+}
+
+// enqueueRestDefinitionForConfiguration maps a Configuration-instance event to the reconcile of its owning
+// RestDefinition: the one whose generated Configuration Kind (getConfigurationGVK) matches the event
+// object's own GVK. RestDefinitions are listed cluster-wide (Configuration instances are not scoped to
+// their owning RestDefinition's namespace — SecretKeySelector documents "a reference to a secret key in an
+// arbitrary namespace" as the intended design, so neither is the RestDefinition/Configuration relationship
+// itself assumed same-namespace here), mirroring core-provider's compositionmirror.go
+// enqueueCDForComposition, the precedent this mechanism is modeled on.
+func enqueueRestDefinitionForConfiguration(kube client.Client) handler.MapFunc {
+	return func(ctx context.Context, obj client.Object) []reconcile.Request {
+		var rds definitionv1alpha1.RestDefinitionList
+		if err := kube.List(ctx, &rds); err != nil {
+			return nil
+		}
+		gvk := obj.GetObjectKind().GroupVersionKind()
+		var reqs []reconcile.Request
+		for i := range rds.Items {
+			if getConfigurationGVK(&rds.Items[i]) == gvk {
+				reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&rds.Items[i])})
+			}
+		}
+		return reqs
+	}
 }
 
 // targetVersion is the CRD API version derived from the OAS document's info.version (normalized to a legal
@@ -487,6 +560,9 @@ func (e *external) Create(ctx context.Context, mg resource.Managed) (err error) 
 	if err := e.syncAuthSecretRBAC(ctx, cr, gvr); err != nil {
 		return fmt.Errorf("syncing auth secret RBAC: %w", err)
 	}
+	if configurationGVR != (schema.GroupVersionResource{}) {
+		e.ensureConfigurationWatch(cr)
+	}
 
 	// Prune served versions superseded by this one that are safe to drop without migrating any instance
 	// (not current, not vacuum, not in storedVersions) — bounds version accumulation from repeated bumps.
@@ -705,6 +781,9 @@ func (e *external) Update(ctx context.Context, mg resource.Managed) (err error) 
 
 	if err := e.syncAuthSecretRBAC(ctx, cr, gvr); err != nil {
 		return fmt.Errorf("syncing auth secret RBAC: %w", err)
+	}
+	if configurationGVR != (schema.GroupVersionResource{}) {
+		e.ensureConfigurationWatch(cr)
 	}
 
 	// Prune served versions superseded by this one that are safe to drop without migrating any instance
