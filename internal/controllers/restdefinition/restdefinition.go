@@ -339,6 +339,26 @@ func (e *external) Observe(ctx context.Context, mg resource.Managed) (obs reconc
 		}, nil
 	}
 
+	// A Configuration instance's usernameRef/passwordRef/tokenRef can change (or an instance can appear/
+	// disappear) independently of the RestDefinition's own spec, so re-collect and re-hash on every
+	// reconcile and treat a change as drift, same pattern as the OAS-content check above. Gated on
+	// configurationGVR (already computed above) so a RestDefinition with no Configuration CRD at all skips
+	// straight past this, rather than attempting and swallowing a guaranteed List failure every reconcile.
+	// A transient collection failure is NOT treated as drift, for the same reason as the OAS check.
+	if configurationGVR != (schema.GroupVersionResource{}) {
+		if refs, cerr := deploy.CollectAuthSecretRefs(ctx, e.kube, getConfigurationGVK(cr)); cerr != nil {
+			e.log.Debug("Could not collect auth secret references for drift check; skipping", "error", cerr)
+		} else if h, herr := deploy.AuthSecretRefsDigest(refs); herr != nil {
+			e.log.Debug("Could not hash auth secret references for drift check; skipping", "error", herr)
+		} else if cr.Status.AuthSecretDigest != h {
+			e.log.Debug("Auth secret references changed", "status", cr.Status.AuthSecretDigest, "current", h)
+			return reconciler.ExternalObservation{
+				ResourceExists:   true,
+				ResourceUpToDate: false,
+			}, nil
+		}
+	}
+
 	dig, err := deploy.Deploy(ctx, e.kube, opts)
 	if err != nil {
 		return reconciler.ExternalObservation{}, err
@@ -462,6 +482,10 @@ func (e *external) Create(ctx context.Context, mg resource.Managed) (err error) 
 	dig, err := deploy.Deploy(ctx, e.kube, opts)
 	if err != nil {
 		return fmt.Errorf("installing controller: %w", err)
+	}
+
+	if err := e.syncAuthSecretRBAC(ctx, cr, gvr); err != nil {
+		return fmt.Errorf("syncing auth secret RBAC: %w", err)
 	}
 
 	// Prune served versions superseded by this one that are safe to drop without migrating any instance
@@ -679,6 +703,10 @@ func (e *external) Update(ctx context.Context, mg resource.Managed) (err error) 
 		return fmt.Errorf("installing controller: %w", err)
 	}
 
+	if err := e.syncAuthSecretRBAC(ctx, cr, gvr); err != nil {
+		return fmt.Errorf("syncing auth secret RBAC: %w", err)
+	}
+
 	// Prune served versions superseded by this one that are safe to drop without migrating any instance
 	// (not current, not vacuum, not in storedVersions) — bounds version accumulation from repeated bumps.
 	// Best-effort: a prune failure must not fail the reconcile.
@@ -788,6 +816,14 @@ func (e *external) Delete(ctx context.Context, mg resource.Managed) (err error) 
 		e.log.Debug(" RestResources still exist",
 			"Group", gvr.Group, "Resource", gvr.Resource)
 		return fmt.Errorf("restResources still exist")
+	}
+
+	// Only torn down once we're past the skipDeploy check above: RestResources still existing means RDC is
+	// still actively reconciling them and may still need to authenticate to the external API, so revoking
+	// its auth-secret access any earlier could break an in-flight reconcile of a resource that isn't
+	// actually going away yet.
+	if terr := e.teardownAuthSecretRBAC(ctx, cr, gvr); terr != nil {
+		e.log.Debug("Tearing down auth secret RBAC failed (non-fatal)", "error", terr)
 	}
 
 	e.log.Debug("Deleting RestDefinition", "Kind:", cr.Spec.Resource.Kind, "Group:", cr.Spec.ResourceGroup)

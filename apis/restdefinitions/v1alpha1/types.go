@@ -616,6 +616,21 @@ type RestDefinitionStatus struct {
 	// (e.g. the referenced ConfigMap) is picked up even when oasPath itself is unchanged.
 	// +optional
 	OASHash string `json:"oasHash,omitempty"`
+
+	// AuthSecretDigest: a hash of the Secret names (grouped by namespace) currently referenced, across every
+	// Configuration CR instance of this RestDefinition's Configuration Kind, by usernameRef/passwordRef/
+	// tokenRef. Observe re-collects and re-hashes these references each reconcile and treats a change as
+	// drift, so RDC's per-namespace auth-secret RBAC (see AuthSecretRBACNamespaces) is refreshed whenever a
+	// Configuration instance starts, stops, or changes which Secret it authenticates with.
+	// +optional
+	AuthSecretDigest string `json:"authSecretDigest,omitempty"`
+
+	// AuthSecretRBACNamespaces: the namespaces in which a namespace-scoped Role+RoleBinding currently grants
+	// RDC's ServiceAccount read access to the auth Secrets collected above. Tracked so a namespace that no
+	// longer has any referencing Configuration instance has its now-unneeded RBAC removed, and so RestDefinition
+	// delete can tear down every namespace's RBAC without re-listing (possibly already-gone) Configuration instances.
+	// +optional
+	AuthSecretRBACNamespaces []string `json:"authSecretRBACNamespaces,omitempty"`
 }
 
 // +kubebuilder:object:root=true
