@@ -296,14 +296,16 @@ func (e *external) Observe(ctx context.Context, mg resource.Managed) (obs reconc
 	// determine the correct value. This only happens on the first Observe before
 	// Create has had a chance to populate the status field.
 	var hasSecuritySchemes bool
+	var doc oas2jsonschema.OASDocument
 	if cr.Status.HasSecuritySchemes != nil {
 		hasSecuritySchemes = *cr.Status.HasSecuritySchemes
 		e.log.Debug("Using saved HasSecuritySchemes from status", "HasSecuritySchemes", hasSecuritySchemes)
 	} else {
 		hasSecuritySchemes = true // Safe default to true
-		doc, _, err := e.getDocumentModelFromCR(ctx, cr)
-		if err != nil {
-			e.log.Debug("Failed to get document model from CR, defaulting HasSecuritySchemes to true", "error", err)
+		var derr error
+		doc, _, derr = e.getDocumentModelFromCR(ctx, cr)
+		if derr != nil {
+			e.log.Debug("Failed to get document model from CR, defaulting HasSecuritySchemes to true", "error", derr)
 		} else {
 			hasSecuritySchemes = doc.SecuritySchemes() != nil && len(doc.SecuritySchemes()) > 0
 		}
@@ -324,6 +326,30 @@ func (e *external) Observe(ctx context.Context, mg resource.Managed) (obs reconc
 	crdOk, err := crd.Lookup(ctx, e.kube, gvr)
 	if err != nil {
 		return reconciler.ExternalObservation{}, err
+	}
+
+	// observedVersion falls back to resourceVersion ("v1alpha1") when status.Resource.APIVersion hasn't
+	// been set yet. That is normally only true before this RestDefinition's very first Create — but it can
+	// also be transiently true on the reconcile immediately following Create, if this Get raced the cache
+	// behind e.kube and read the CR before its just-written status was visible: Create derives the CRD
+	// version from the OAS (targetVersion) and applies it there, not at the fallback version, so the
+	// fallback-based lookup above spuriously reports "not found" even though the CRD exists. Since doc (the
+	// parsed OAS) is already in hand whenever status hasn't been observed yet, re-check at the
+	// OAS-derived version before concluding the CRD is genuinely missing.
+	if !crdOk && cr.Status.Resource.APIVersion == "" && doc != nil {
+		if derivedGVR := (schema.GroupVersionResource{
+			Group:    cr.Spec.ResourceGroup,
+			Version:  targetVersion(doc),
+			Resource: gvr.Resource,
+		}); derivedGVR != gvr {
+			if derivedOk, derr := crd.Lookup(ctx, e.kube, derivedGVR); derr == nil && derivedOk {
+				e.log.Debug("CRD found at OAS-derived version, not the status fallback version — status likely hasn't caught up yet",
+					"fallbackGVR", gvr.String(), "derivedGVR", derivedGVR.String())
+				gvr = derivedGVR
+				gvk.Version = derivedGVR.Version
+				crdOk = true
+			}
+		}
 	}
 
 	if !crdOk {
