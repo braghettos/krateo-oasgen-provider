@@ -28,6 +28,15 @@ data:
     - apiGroups: [""]
       resources: ["configmaps"]
       verbs: ["get", "list", "watch"]
+    # Required alongside the roles/rolebindings grant below, NOT optional: the secretRef resolver
+    # creates a per-CR Role granting read on just the Secrets that CR names, and Kubernetes forbids
+    # creating a Role conferring permissions the creator does not already hold (privilege-escalation
+    # prevention). Without this the RDC can attempt that grant but can never succeed, so every
+    # secretRef-bearing resource fails to reconcile. Granting `escalate` on roles would also satisfy
+    # the check but is strictly worse.
+    - apiGroups: [""]
+      resources: ["secrets"]
+      verbs: ["get", "list", "watch"]
     - apiGroups: ["rbac.authorization.k8s.io"]
       resources: ["roles", "rolebindings"]
       verbs: ["create", "get", "update", "patch", "delete"]
