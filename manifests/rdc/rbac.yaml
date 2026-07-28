@@ -22,6 +22,11 @@ data:
     - apiGroups: [""]
       resources: ["events"]
       verbs: ["create", "patch", "update"]
+    # events.k8s.io is the modern Events API the controller's recorder actually writes through;
+    # the legacy core ("") grant above is not sufficient on its own.
+    - apiGroups: ["events.k8s.io"]
+      resources: ["events"]
+      verbs: ["create", "patch", "update"]
     - apiGroups: ["ogen.krateo.io"]
       resources: ["restdefinitions", "restdefinitions/status"]
       verbs: ["get", "list", "watch"]
