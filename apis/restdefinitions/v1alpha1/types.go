@@ -127,6 +127,15 @@ type FieldMappingItem struct {
 	// InCustomResource is the JSONPath to the field within the Custom Resource, e.g. 'spec.permission' or
 	// 'status.metadata.id'. For request entries it is the SOURCE of the value; for response entries it is
 	// the CR-domain DESTINATION whose leaf name and parent path determine where the value lands.
+	//
+	// Array elements can be addressed either by position ('spec.credentials[0].value') or, preferably, by
+	// content with a predicate ('spec.credentials[?type=password].value'), which selects the single element
+	// whose given field equals the given value. A predicate is shape-independent: it keeps targeting the
+	// right element when the user lists the array in a different order, where a positional index would
+	// silently address a different one. The predicate must match exactly one element — matching several is
+	// an error rather than a silent first-wins, and on a request body it can only address an element that
+	// already exists (it never invents one). Same syntax applies to inBody and to the resolver's
+	// nameFromCustomResource/keyFromCustomResource.
 	// +optional
 	InCustomResource string `json:"inCustomResource,omitempty"`
 	// ValueMapping optionally transforms the value as it crosses the CR<->API boundary.
