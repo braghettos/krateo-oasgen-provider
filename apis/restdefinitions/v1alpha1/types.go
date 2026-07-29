@@ -133,10 +133,9 @@ type FieldMappingItem struct {
 	// +optional
 	ValueMapping *ValueMapping `json:"valueMapping,omitempty"`
 	// Resolver, when set, sources the field's value from something other than a literal read of
-	// inCustomResource: an apiLookup call (resolve an alias to an id via another call in this
-	// RestDefinition) or a secretRef (substitute a Kubernetes Secret's value). Applied BEFORE
-	// valueMapping, so a resolved value may still be alias/jq-transformed afterward. Valid only on
-	// request-direction entries (inPath/inQuery/inBody set).
+	// inCustomResource — currently a secretRef, substituting a Kubernetes Secret's value. Applied
+	// BEFORE valueMapping, so a resolved value may still be alias/jq-transformed afterward. Valid
+	// only on request-direction entries (inPath/inQuery/inBody set).
 	// +optional
 	Resolver *FieldResolver `json:"resolver,omitempty"`
 	// DefaultIfAbsent, for a response entry (inResponse), supplies the value to inject at the CR-domain
@@ -150,38 +149,28 @@ type FieldMappingItem struct {
 	DefaultIfAbsent *apiextensionsv1.JSON `json:"defaultIfAbsent,omitempty"`
 }
 
-// FieldResolver is the shared primitive behind issues #30 (apiLookup) and #31 (secretRef): exactly one of
-// apiLookup or secretRef is set, matching type.
-// +kubebuilder:validation:XValidation:rule="self.type == 'apiLookup' ? has(self.apiLookup) : true",message="apiLookup must be set when type is 'apiLookup'"
+// FieldResolver is the primitive behind issue #31 (secretRef). It is deliberately kept as an extensible
+// discriminated union (type + a per-kind struct) rather than collapsed into SecretRef alone, so a future
+// resolver kind is an additive change.
+//
+// An apiLookup kind shipped briefly in 0.12.0 and was removed in 0.15.0 without ever having a user. It
+// resolved an alias to an id by calling another action in the SAME RestDefinition, but its Action had to
+// name one of the five CRUD verbs (the VerbsDescription.Action enum), so an auxiliary lookup endpoint could
+// not be declared and cross-resource lookup — the reason it was built, see
+// krateo-rest-dynamic-controller#30 — was inexpressible. The case it appeared to serve (resolving a
+// server-generated id) is already covered by additionalStatusFields + inCustomResource: status.id. Do not
+// reintroduce it in that shape: #30 carries a design for named lookups with client-side matching.
 // +kubebuilder:validation:XValidation:rule="self.type == 'secretRef' ? has(self.secretRef) : true",message="secretRef must be set when type is 'secretRef'"
 type FieldResolver struct {
 	// Type selects the resolver kind.
-	// +kubebuilder:validation:Enum=apiLookup;secretRef
+	// +kubebuilder:validation:Enum=secretRef
 	// +required
 	Type string `json:"type"`
-	// ApiLookup resolves an alias on the Custom Resource into an id via a call in the SAME RestDefinition's
-	// OAS document (used when type is 'apiLookup').
-	// +optional
-	ApiLookup *APILookupResolver `json:"apiLookup,omitempty"`
 	// SecretRef substitutes a Kubernetes Secret's value for the field (used when type is 'secretRef'). The
 	// Secret is always read from the Custom Resource instance's own namespace — there is no field to name a
 	// different one.
 	// +optional
 	SecretRef *SecretRefResolver `json:"secretRef,omitempty"`
-}
-
-// APILookupResolver resolves a Custom Resource alias into an id by calling another action (e.g. 'findby')
-// declared in the same RestDefinition's OAS document, and reading the result out of that call's response.
-type APILookupResolver struct {
-	// Action is the VerbsDescription.Action, in this RestDefinition, to call in order to resolve the alias.
-	// +required
-	Action string `json:"action"`
-	// RequestParam is the path or query parameter on the lookup call that receives the alias value.
-	// +required
-	RequestParam string `json:"requestParam"`
-	// ResponsePath is the JSONPath into the lookup call's response body that yields the resolved value.
-	// +required
-	ResponsePath string `json:"responsePath"`
 }
 
 // SecretRefResolver substitutes a Kubernetes Secret's value for the field. The Secret is always read from

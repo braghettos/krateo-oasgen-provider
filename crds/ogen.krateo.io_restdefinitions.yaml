@@ -684,36 +684,10 @@ spec:
                               resolver:
                                 description: |-
                                   Resolver, when set, sources the field's value from something other than a literal read of
-                                  inCustomResource: an apiLookup call (resolve an alias to an id via another call in this
-                                  RestDefinition) or a secretRef (substitute a Kubernetes Secret's value). Applied BEFORE
-                                  valueMapping, so a resolved value may still be alias/jq-transformed afterward. Valid only on
-                                  request-direction entries (inPath/inQuery/inBody set).
+                                  inCustomResource — currently a secretRef, substituting a Kubernetes Secret's value. Applied
+                                  BEFORE valueMapping, so a resolved value may still be alias/jq-transformed afterward. Valid
+                                  only on request-direction entries (inPath/inQuery/inBody set).
                                 properties:
-                                  apiLookup:
-                                    description: |-
-                                      ApiLookup resolves an alias on the Custom Resource into an id via a call in the SAME RestDefinition's
-                                      OAS document (used when type is 'apiLookup').
-                                    properties:
-                                      action:
-                                        description: Action is the VerbsDescription.Action,
-                                          in this RestDefinition, to call in order
-                                          to resolve the alias.
-                                        type: string
-                                      requestParam:
-                                        description: RequestParam is the path or query
-                                          parameter on the lookup call that receives
-                                          the alias value.
-                                        type: string
-                                      responsePath:
-                                        description: ResponsePath is the JSONPath
-                                          into the lookup call's response body that
-                                          yields the resolved value.
-                                        type: string
-                                    required:
-                                    - action
-                                    - requestParam
-                                    - responsePath
-                                    type: object
                                   secretRef:
                                     description: |-
                                       SecretRef substitutes a Kubernetes Secret's value for the field (used when type is 'secretRef'). The
@@ -737,16 +711,12 @@ spec:
                                   type:
                                     description: Type selects the resolver kind.
                                     enum:
-                                    - apiLookup
                                     - secretRef
                                     type: string
                                 required:
                                 - type
                                 type: object
                                 x-kubernetes-validations:
-                                - message: apiLookup must be set when type is 'apiLookup'
-                                  rule: 'self.type == ''apiLookup'' ? has(self.apiLookup)
-                                    : true'
                                 - message: secretRef must be set when type is 'secretRef'
                                   rule: 'self.type == ''secretRef'' ? has(self.secretRef)
                                     : true'
