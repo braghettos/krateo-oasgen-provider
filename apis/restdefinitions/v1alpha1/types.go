@@ -250,7 +250,6 @@ type JQProgram struct {
 
 // +kubebuilder:validation:XValidation:rule="self.action == 'findby' || !has(self.identifiersMatchPolicy)",message="identifiersMatchPolicy can only be set for 'findby' actions"
 // +kubebuilder:validation:XValidation:rule="self.action == 'findby' || !has(self.pagination)",message="pagination can only be set for 'findby' actions"
-// +kubebuilder:validation:XValidation:rule="!has(self.requestTransform)",message="requestTransform is reserved and not implemented yet: it would be silently ignored, so it is rejected rather than accepted as a no-op. Use responseTransform for response-side whole-document transforms, or a per-field jq valueMapping."
 type VerbsDescription struct {
 	// Name of the action to perform when this api is called [create, update, get, delete, findby]
 	// +kubebuilder:validation:Enum=create;update;get;delete;findby
@@ -278,19 +277,21 @@ type VerbsDescription struct {
 	// behavior rather than CRD shape, it is intentionally mutable.
 	// +optional
 	FieldMapping []FieldMappingItem `json:"fieldMapping,omitempty"`
-	// RequestTransform is RESERVED AND NOT IMPLEMENTED, and is rejected at admission until it is.
+	// RequestTransform is a whole-document gojq program applied to the assembled request body immediately
+	// before it is sent — the document-scoped sibling of a per-field jq valueMapping, mirroring
+	// ResponseTransform. Input '.' is the entire body and the single output replaces it.
 	//
-	// The intent is a whole-document gojq program applied to the assembled request body immediately before
-	// it is sent — the document-scoped sibling of a per-field jq valueMapping, mirroring ResponseTransform.
-	// rest-dynamic-controller parses it and materializes any module ref, but no call site ever runs it, so
-	// a resource declaring one was silently sent untransformed: the request went out as if the field were
-	// absent, with nothing reporting it.
+	// It runs AFTER the per-field fieldMapping entries have composed the body, so the program sees the
+	// finished article. That is the inverse of ResponseTransform, which runs BEFORE per-field mapping —
+	// both orderings exist so the document program always gets the API-shaped view.
 	//
-	// It is rejected rather than merely documented because a schema that accepts what nothing implements is
-	// a trap this API has already been caught by once — the apiLookup resolver kind shipped in 0.12.0,
-	// was removed in 0.15.0, and until chart 0.9.14 the published CRD still validated it. Failing at
-	// `kubectl apply` is recoverable; a transform that silently does not happen is not. Relax the CEL rule
-	// below in the same change that adds the call site.
+	// Applies only where a body is sent (create/update/delete); on a bodyless verb it is a no-op rather
+	// than an invented body. A program that fails to compile or run fails the reconcile rather than
+	// sending a partially transformed body.
+	//
+	// Requires rest-dynamic-controller >= 0.17.0. Between oasgen 0.16.0 and this release the field was
+	// REJECTED at admission: it was accepted by the schema and executed by nothing, and rejecting it was
+	// preferable to letting it be a silent no-op.
 	// +optional
 	RequestTransform *JQProgram `json:"requestTransform,omitempty"`
 	// ResponseTransform is a whole-document gojq program applied to the raw response body once, at the
