@@ -96,11 +96,31 @@ type Schema struct {
 	Required             []string
 	Default              interface{} // Default value for the schema
 	Enum                 []interface{}
-	AdditionalProperties bool
+	AdditionalProperties *AdditionalProperties
 	MaxProperties        int
 	Format               string                 // JSON Schema "format"; numeric formats (int32/int64/float/double) are emitted into the generated schema, all formats are also added to the description
 	Extensions           map[string]interface{} // Currently not used but can hold custom extensions
 }
+
+// AdditionalProperties is JSON Schema §5.18 in EITHER of its two forms; nil means the keyword is absent.
+//
+// Only the boolean form used to survive the OAS conversion, so a typed free-form map
+// (additionalProperties: {type: string}, i.e. map[string]string) reached crdgen as nothing at all and the
+// generated CRD lost both the type and its validation. crdgen has always been able to represent the object
+// form — its own AdditionalProperties unmarshals from either a bool or a nested schema — so the value was
+// being discarded on this side, before it ever got there.
+//
+// Schema wins when set: the two forms are mutually exclusive in the source document, and a value schema is
+// strictly more informative than "true".
+type AdditionalProperties struct {
+	// Bool is the boolean form: true permits any additional property, false forbids them.
+	Bool bool
+	// Schema is the object form: the schema every additional value must satisfy.
+	Schema *Schema
+}
+
+// IsSchema reports whether this is the object (typed-map) form.
+func (a *AdditionalProperties) IsSchema() bool { return a != nil && a.Schema != nil }
 
 // Property represents a single key-value pair in a schema's properties.
 // Using a slice of these preserves order.
@@ -206,7 +226,13 @@ func (s *Schema) deepCopyRec(visited map[*Schema]*Schema) *Schema {
 	// Note: Default and Enum are shallow-copied. This is an accepted limitation
 	// as they are expected to contain primitive types.
 	newSchema.Default = s.Default
-	newSchema.AdditionalProperties = s.AdditionalProperties
+	if s.AdditionalProperties != nil {
+		ap := &AdditionalProperties{Bool: s.AdditionalProperties.Bool}
+		if s.AdditionalProperties.Schema != nil {
+			ap.Schema = s.AdditionalProperties.Schema.deepCopyRec(visited)
+		}
+		newSchema.AdditionalProperties = ap
+	}
 	newSchema.MaxProperties = s.MaxProperties
 	newSchema.Format = s.Format
 

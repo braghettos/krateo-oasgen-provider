@@ -301,14 +301,18 @@ func convertLibopenapiSchemaWithVisited(
 	if s.AdditionalProperties != nil {
 		switch {
 		case s.AdditionalProperties.IsB():
-			// Boolean form: allows or disallows any additional properties
-			domainSchema.AdditionalProperties = s.AdditionalProperties.B
+			// Boolean form: allows or disallows any additional properties.
+			domainSchema.AdditionalProperties = &AdditionalProperties{Bool: s.AdditionalProperties.B}
 		case s.AdditionalProperties.IsA():
-			// Schema form: recurse to handle nested schemas properly
-			// Currently not handled in `oasgen-provider`, ignored
-			//log.Print("Warning: Schema form of AdditionalProperties is not currently handled")
+			// Object form: a typed free-form map (additionalProperties: {type: string}). Recursed through
+			// the same guard/visited/depth machinery as Items, so a self-referential value schema is
+			// handled identically. Dropping this used to cost the CRD both the value type and its
+			// validation — see the AdditionalProperties doc comment in types.go.
+			if valueSchema := convertLibopenapiSchemaWithVisited(ctx, s.AdditionalProperties.A, guard, visited, depth+1); valueSchema != nil {
+				domainSchema.AdditionalProperties = &AdditionalProperties{Schema: valueSchema}
+			}
 		default:
-			//log.Print("Warning: Unknown AdditionalProperties type")
+			log.Print("Warning: unknown additionalProperties form; ignored")
 		}
 	}
 

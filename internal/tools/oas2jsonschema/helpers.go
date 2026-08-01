@@ -296,9 +296,21 @@ func schemaToMapWithVisited(
 		m["default"] = schema.Default
 	}
 
-	// Process additional properties
-	if schema.AdditionalProperties {
-		m["additionalProperties"] = true
+	// Process additional properties. crdgen accepts either form on the wire (its own AdditionalProperties
+	// unmarshals from a bool or a nested schema), so the object form is emitted as the value sub-schema and
+	// reaches the CRD as a typed map; the boolean form is emitted as before.
+	if schema.AdditionalProperties != nil {
+		if schema.AdditionalProperties.IsSchema() {
+			apMap, err := schemaToMapWithVisited(ctx, schema.AdditionalProperties.Schema, guard, visited, depth+1)
+			if err != nil {
+				return nil, fmt.Errorf("failed to convert additionalProperties schema: %w", err)
+			}
+			if apMap != nil {
+				m["additionalProperties"] = apMap
+			}
+		} else if schema.AdditionalProperties.Bool {
+			m["additionalProperties"] = true
+		}
 	}
 
 	// Process max properties
