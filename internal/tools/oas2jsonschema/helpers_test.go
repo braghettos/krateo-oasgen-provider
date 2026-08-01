@@ -227,3 +227,67 @@ func TestPrepareSchemaForCRDWithVisited_MergeAllOfEnumOnlySchemas(t *testing.T) 
 		require.True(t, enumMap[expectedVal], "Enum values should contain %v", expectedVal)
 	}
 }
+
+// TestAdditionalProperties_ObjectForm is the regression for #45: a typed free-form map
+// (additionalProperties: {type: string}) must survive OAS -> JSON-schema conversion. Only the boolean form
+// used to, so Kubernetes-idiomatic annotation/label maps reached the CRD untyped or not at all.
+func TestAdditionalProperties_ObjectForm(t *testing.T) {
+	cfg := DefaultGeneratorConfig()
+
+	t.Run("object form is emitted as the value sub-schema", func(t *testing.T) {
+		schema := &Schema{
+			Type: []string{"object"},
+			AdditionalProperties: &AdditionalProperties{
+				Schema: &Schema{Type: []string{"string"}},
+			},
+		}
+		m, err := schemaToMap(schema, cfg)
+		require.NoError(t, err)
+		ap, ok := m["additionalProperties"].(map[string]interface{})
+		require.True(t, ok, "expected a value sub-schema, got %#v", m["additionalProperties"])
+		assert.Equal(t, "string", ap["type"], "the value type must survive — this is what map[string]string means")
+	})
+
+	t.Run("boolean form still emits true", func(t *testing.T) {
+		m, err := schemaToMap(&Schema{Type: []string{"object"}, AdditionalProperties: &AdditionalProperties{Bool: true}}, cfg)
+		require.NoError(t, err)
+		assert.Equal(t, true, m["additionalProperties"])
+	})
+
+	t.Run("false and absent both emit nothing", func(t *testing.T) {
+		for _, ap := range []*AdditionalProperties{{Bool: false}, nil} {
+			m, err := schemaToMap(&Schema{Type: []string{"object"}, AdditionalProperties: ap}, cfg)
+			require.NoError(t, err)
+			_, present := m["additionalProperties"]
+			assert.False(t, present, "additionalProperties: false is the default and need not be emitted")
+		}
+	})
+
+	t.Run("nested value schema survives, not just scalars", func(t *testing.T) {
+		schema := &Schema{
+			Type: []string{"object"},
+			AdditionalProperties: &AdditionalProperties{Schema: &Schema{
+				Type:       []string{"object"},
+				Properties: []Property{{Name: "port", Schema: &Schema{Type: []string{"integer"}, Format: "int64"}}},
+			}},
+		}
+		m, err := schemaToMap(schema, cfg)
+		require.NoError(t, err)
+		ap := m["additionalProperties"].(map[string]interface{})
+		props := ap["properties"].(map[string]interface{})
+		port := props["port"].(map[string]interface{})
+		assert.Equal(t, "integer", port["type"])
+		assert.Equal(t, "int64", port["format"], "int64 must not be downgraded inside a map value either (cfbe7fc)")
+	})
+
+	t.Run("deepCopy copies the value schema rather than aliasing it", func(t *testing.T) {
+		orig := &Schema{Type: []string{"object"}, AdditionalProperties: &AdditionalProperties{Schema: &Schema{Type: []string{"string"}}}}
+		cp := orig.deepCopy()
+		require.NotNil(t, cp.AdditionalProperties)
+		require.NotNil(t, cp.AdditionalProperties.Schema)
+		assert.NotSame(t, orig.AdditionalProperties, cp.AdditionalProperties, "struct must be copied")
+		assert.NotSame(t, orig.AdditionalProperties.Schema, cp.AdditionalProperties.Schema, "value schema must be copied")
+		cp.AdditionalProperties.Schema.Type = []string{"integer"}
+		assert.Equal(t, []string{"string"}, orig.AdditionalProperties.Schema.Type, "mutating the copy must not touch the original")
+	})
+}
