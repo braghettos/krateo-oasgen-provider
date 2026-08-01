@@ -103,31 +103,44 @@ func TestValidateAsyncPollPaths(t *testing.T) {
 	// What the vendor spec actually declares — the same endpoint under a different parameter name.
 	const vendorPath = "/projects/{projectId}/providers/Aruba.Baremetal/hpcs/monitor/{id}"
 
-	crWith := func(pollPath string) *definitionv1alpha1.RestDefinition {
+	crWithHandle := func(pollPath, handleParam string) *definitionv1alpha1.RestDefinition {
 		return &definitionv1alpha1.RestDefinition{
 			Spec: definitionv1alpha1.RestDefinitionSpec{
 				Resource: definitionv1alpha1.Resource{
 					VerbsDescription: []definitionv1alpha1.VerbsDescription{{
 						Action: "create", Method: "POST", Path: "/things",
 						Async: &definitionv1alpha1.AsyncConfig{
-							Poll: definitionv1alpha1.PollConfig{Path: pollPath, StatusPath: "status", SuccessValues: []string{"Succeeded"}},
+							Poll: definitionv1alpha1.PollConfig{Path: pollPath, HandleParam: handleParam, StatusPath: "status", SuccessValues: []string{"Succeeded"}},
 						},
 					}},
 				},
 			},
 		}
 	}
+	crWith := func(pollPath string) *definitionv1alpha1.RestDefinition { return crWithHandle(pollPath, "") }
 	doc := &stubOASDoc{paths: map[string]bool{oasPath: true, vendorPath: true}}
 
 	t.Run("valid poll path passes", func(t *testing.T) {
 		require.NoError(t, validateAsyncPollPaths(crWith(oasPath), doc))
 	})
 
-	t.Run("vendor spelling is rejected: declared in the OAS but no {operationId} to bind", func(t *testing.T) {
+	t.Run("vendor spelling without a declaration is rejected", func(t *testing.T) {
 		err := validateAsyncPollPaths(crWith(vendorPath), doc)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "{operationId}")
+		assert.Contains(t, err.Error(), "{operationId}", "the default is what it looked for")
+		assert.Contains(t, err.Error(), "handleParam", "the error must point at the way out")
 		assert.Contains(t, err.Error(), "create", "the error must name the offending verb")
+	})
+
+	t.Run("vendor spelling PASSES once handleParam declares it — the whole point", func(t *testing.T) {
+		require.NoError(t, validateAsyncPollPaths(crWithHandle(vendorPath, "id"), doc),
+			"an unmodified vendor OAS must be usable by declaring its parameter name")
+	})
+
+	t.Run("a declared name absent from the path is rejected", func(t *testing.T) {
+		err := validateAsyncPollPaths(crWithHandle(oasPath, "id"), doc)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "{id}", "the error names the declared token, not the default")
 	})
 
 	t.Run("operationId spelling not in the document is rejected as an exact-lookup miss", func(t *testing.T) {

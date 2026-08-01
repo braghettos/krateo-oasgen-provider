@@ -71,10 +71,10 @@ func expandWildcardActions(actions []string, verbsDescription []definitionv1alph
 	return actions, nil
 }
 
-// operationIDToken is the path-parameter token rest-dynamic-controller binds the extracted async operation
-// handle to. It is hardcoded there (internal/controllers/async_handler.go: params["operationId"]), so the
-// OAS document must declare the poll endpoint with a parameter of exactly this name.
-const operationIDToken = "{operationId}"
+// defaultHandleParam is the path-parameter name rest-dynamic-controller binds the extracted async
+// operation handle to when poll.handleParam is not declared. It mirrors RDC's own default; the two must
+// agree or this validation would accept paths RDC then fails to resolve.
+const defaultHandleParam = "operationId"
 
 // validateAsyncPollPaths checks every verb's async.poll.path against rest-dynamic-controller's runtime
 // contract, so a violation is reported when the RestDefinition is processed instead of on the first poll
@@ -85,14 +85,14 @@ const operationIDToken = "{operationId}"
 //  1. The poll path must be an EXACT key of the OAS paths object. The poll call goes through the same
 //     client as every other call, which resolves the path by exact string lookup — so a path differing from
 //     the OAS key by even a parameter NAME is "path not found" on every poll.
-//  2. The path must contain the literal {operationId} token, because that is the parameter name the handle
-//     is bound to.
+//  2. The path must contain the {handleParam} token, because that is the parameter the extracted operation
+//     handle is bound to. handleParam defaults to "operationId".
 //
-// Together these mean the OAS document itself must declare the poll endpoint with a parameter named
-// operationId. Vendor specs do not: Aruba's baremetal API declares .../monitor/{id}. An author who writes
-// the OAS's own path gets an unresolved required parameter; one who writes .../{operationId} gets an exact
-// lookup miss. Both spellings failed at runtime and both were accepted — the failure this converts into an
-// error names which of the two is wrong.
+// Both used to fail only at poll time, after a create had already fired. The pair is also why handleParam
+// exists: when the name was hardcoded, an author writing the OAS's own path (.../monitor/{id}) got an
+// unresolved required parameter, and one writing .../{operationId} got a lookup miss — both spellings
+// broken, both accepted. Declaring handleParam: id makes the vendor document work as written, and this
+// check then confirms the declared name actually appears in the path.
 func validateAsyncPollPaths(cr *definitionv1alpha1.RestDefinition, doc oas2jsonschema.OASDocument) error {
 	if cr == nil || doc == nil {
 		return nil
@@ -105,18 +105,23 @@ func validateAsyncPollPaths(cr *definitionv1alpha1.RestDefinition, doc oas2jsons
 		if pollPath == "" {
 			continue // required by the CRD; nothing useful to add here
 		}
-		if !strings.Contains(pollPath, operationIDToken) {
+		handleParam := v.Async.Poll.HandleParam
+		if handleParam == "" {
+			handleParam = defaultHandleParam
+		}
+		token := "{" + handleParam + "}"
+		if !strings.Contains(pollPath, token) {
 			return fmt.Errorf(
 				"verb %q: async.poll.path %q does not contain the %s token, so the extracted operation handle "+
-					"has nothing to bind to and every poll would fail; the OAS document must declare the poll "+
-					"endpoint with a path parameter named operationId",
-				v.Action, pollPath, operationIDToken)
+					"has nothing to bind to and every poll would fail; either use the parameter name the OAS "+
+					"document declares for the poll endpoint, or set async.poll.handleParam to it",
+				v.Action, pollPath, token)
 		}
 		if _, ok := doc.FindPath(pollPath); !ok {
 			return fmt.Errorf(
 				"verb %q: async.poll.path %q is not a path declared in the OAS document (paths are matched by "+
-					"exact string, so a differing parameter name is a miss); declare the poll endpoint with a "+
-					"path parameter named operationId, or rename the existing one to match",
+					"exact string, so a differing parameter name is a miss); write the path exactly as the "+
+					"document declares it and set async.poll.handleParam to its handle parameter's name",
 				v.Action, pollPath)
 		}
 	}

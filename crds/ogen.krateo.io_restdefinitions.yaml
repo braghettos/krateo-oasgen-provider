@@ -577,6 +577,23 @@ spec:
                                   items:
                                     type: string
                                   type: array
+                                handleParam:
+                                  description: |-
+                                    HandleParam is the NAME of the path parameter in Path that receives the extracted operation handle.
+                                    Defaults to "operationId".
+
+                                    Despite that default's spelling this is NOT the OAS `operationId` keyword: that identifies an
+                                    operation definition and is optional, whereas this names a path parameter. An async API is not
+                                    required to expose anything called operationId — it only has to return a handle somewhere in the
+                                    trigger response (declared by operationRef) and offer a poll endpoint that accepts it.
+
+                                    Set this when the OAS document names the parameter something else, which vendor specs routinely do:
+                                    Aruba's baremetal API declares .../monitor/{id}, so path: .../monitor/{id} with handleParam: id uses
+                                    that document unmodified. Before this field existed the document had to be patched to rename the
+                                    parameter to operationId.
+
+                                    Requires rest-dynamic-controller >= 0.18.0; an older controller ignores it and binds to operationId.
+                                  type: string
                                 intervalSeconds:
                                   description: 'IntervalSeconds: delay between polls.
                                     Defaults to 1.'
@@ -601,10 +618,8 @@ spec:
                                      2. it must be an EXACT key of the OAS paths object, because paths are resolved by exact string
                                         lookup.
 
-                                    Together they mean the OAS document must declare the poll endpoint with a path parameter named
-                                    operationId. Vendor specs often name it something else (.../monitor/{id}); such a document needs that
-                                    one parameter renamed, since writing the vendor spelling here fails (1) and writing {operationId}
-                                    fails (2).
+                                    Together they mean the poll endpoint must be declared in the OAS document with a path parameter whose
+                                    name matches handleParam below.
                                   type: string
                                 statusPath:
                                   description: 'StatusPath: JSONPath to the status
