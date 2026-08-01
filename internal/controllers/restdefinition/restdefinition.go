@@ -634,6 +634,13 @@ func (e *external) Create(ctx context.Context, mg resource.Managed) (err error) 
 // (create when absent, or in-place schema replace of the current version). It is shared by Create (first
 // install) and Update (regenerate when the OAS content changed), so an edited OAS is reflected in the CRD.
 func (e *external) generateAndApplyCRDs(ctx context.Context, cr *definitionv1alpha1.RestDefinition, gvk schema.GroupVersionKind, doc oas2jsonschema.OASDocument, hasSecuritySchemes bool) (err error) {
+	// Fail here rather than at poll time: an async poll path that breaks rest-dynamic-controller's runtime
+	// contract is otherwise accepted by admission AND by this reconcile, and only surfaces once a create has
+	// already fired (issue #46).
+	if verr := validateAsyncPollPaths(cr, doc); verr != nil {
+		return verr
+	}
+
 	// Shim VerbsDescription -> oas2jsonschema.Verb (decoupled from the RestDefinition CRD types).
 	verbs := make([]oas2jsonschema.Verb, len(cr.Spec.Resource.VerbsDescription))
 	for i, v := range cr.Spec.Resource.VerbsDescription {
