@@ -4,7 +4,9 @@ import (
 	"testing"
 
 	definitionv1alpha1 "github.com/krateoplatformops/oasgen-provider/apis/restdefinitions/v1alpha1"
+	"github.com/krateoplatformops/oasgen-provider/internal/tools/oas2jsonschema"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestExpandWildcardActions(t *testing.T) {
@@ -79,4 +81,69 @@ func TestExpandWildcardActions(t *testing.T) {
 			}
 		})
 	}
+}
+
+// stubOASDoc is a minimal OASDocument whose only real behaviour is exact path lookup — which is precisely
+// the runtime semantic being validated.
+type stubOASDoc struct{ paths map[string]bool }
+
+func (s *stubOASDoc) FindPath(p string) (oas2jsonschema.PathItem, bool) {
+	if s.paths[p] {
+		return nil, true
+	}
+	return nil, false
+}
+func (s *stubOASDoc) SecuritySchemes() []oas2jsonschema.SecuritySchemeInfo { return nil }
+func (s *stubOASDoc) Version() string                                     { return "1.0" }
+
+// TestValidateAsyncPollPaths is the regression for #46: both spellings of an async poll path used to be
+// accepted at admission and fail only at poll time, after a create had already fired.
+func TestValidateAsyncPollPaths(t *testing.T) {
+	const oasPath = "/projects/{projectId}/providers/Aruba.Baremetal/hpcs/monitor/{operationId}"
+	// What the vendor spec actually declares — the same endpoint under a different parameter name.
+	const vendorPath = "/projects/{projectId}/providers/Aruba.Baremetal/hpcs/monitor/{id}"
+
+	crWith := func(pollPath string) *definitionv1alpha1.RestDefinition {
+		return &definitionv1alpha1.RestDefinition{
+			Spec: definitionv1alpha1.RestDefinitionSpec{
+				Resource: definitionv1alpha1.Resource{
+					VerbsDescription: []definitionv1alpha1.VerbsDescription{{
+						Action: "create", Method: "POST", Path: "/things",
+						Async: &definitionv1alpha1.AsyncConfig{
+							Poll: definitionv1alpha1.PollConfig{Path: pollPath, StatusPath: "status", SuccessValues: []string{"Succeeded"}},
+						},
+					}},
+				},
+			},
+		}
+	}
+	doc := &stubOASDoc{paths: map[string]bool{oasPath: true, vendorPath: true}}
+
+	t.Run("valid poll path passes", func(t *testing.T) {
+		require.NoError(t, validateAsyncPollPaths(crWith(oasPath), doc))
+	})
+
+	t.Run("vendor spelling is rejected: declared in the OAS but no {operationId} to bind", func(t *testing.T) {
+		err := validateAsyncPollPaths(crWith(vendorPath), doc)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "{operationId}")
+		assert.Contains(t, err.Error(), "create", "the error must name the offending verb")
+	})
+
+	t.Run("operationId spelling not in the document is rejected as an exact-lookup miss", func(t *testing.T) {
+		err := validateAsyncPollPaths(crWith("/other/monitor/{operationId}"), doc)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not a path declared in the OAS document")
+	})
+
+	t.Run("a verb without async is untouched", func(t *testing.T) {
+		cr := crWith(oasPath)
+		cr.Spec.Resource.VerbsDescription[0].Async = nil
+		require.NoError(t, validateAsyncPollPaths(cr, doc))
+	})
+
+	t.Run("nil cr or doc is a no-op", func(t *testing.T) {
+		require.NoError(t, validateAsyncPollPaths(nil, doc))
+		require.NoError(t, validateAsyncPollPaths(crWith(oasPath), nil))
+	})
 }

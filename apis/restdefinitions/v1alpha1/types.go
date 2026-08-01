@@ -408,8 +408,18 @@ type PollConfig struct {
 	// +kubebuilder:validation:Enum=GET
 	// +optional
 	Method string `json:"method,omitempty"`
-	// Path: the poll endpoint template; the token {operationId} is bound from the extracted handle. The path
-	// must be declared in the OAS document.
+	// Path: the poll endpoint template. Two things must hold together, and both are checked when the
+	// RestDefinition is processed rather than left to fail on the first poll:
+	//
+	//  1. it must contain the literal {operationId} token — that is the parameter name the extracted handle
+	//     is bound to in rest-dynamic-controller;
+	//  2. it must be an EXACT key of the OAS paths object, because paths are resolved by exact string
+	//     lookup.
+	//
+	// Together they mean the OAS document must declare the poll endpoint with a path parameter named
+	// operationId. Vendor specs often name it something else (.../monitor/{id}); such a document needs that
+	// one parameter renamed, since writing the vendor spelling here fails (1) and writing {operationId}
+	// fails (2).
 	// +required
 	Path string `json:"path"`
 	// StatusPath: JSONPath to the status field in the poll response.
