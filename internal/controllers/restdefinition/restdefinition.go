@@ -1,6 +1,7 @@
 package restdefinition
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -693,6 +694,30 @@ func (e *external) generateAndApplyCRDs(ctx context.Context, cr *definitionv1alp
 	}
 	for _, w := range result.ValidationWarnings {
 		e.log.Debug("Schema validation warning", "Warning", w)
+	}
+
+	// A skipped security scheme is not a debug-level fact. The document advertises a way to authenticate
+	// that the generated Configuration CRD cannot express, so the user has no field to supply a credential
+	// through and discovers it as 401s at reconcile time. Warn always; when NOTHING could be generated the
+	// resource cannot authenticate at all, so say so distinctly and emit an event.
+	//
+	// Deliberately not fatal: unlike a rejected requestTransform or poll path, the user declared nothing
+	// here — this is the vendor's document — and we cannot know whether the endpoint actually enforces the
+	// scheme it advertises. Failing generation would break anyone running an oauth2-declaring document
+	// against an endpoint that does not enforce it.
+	if len(result.SkippedSecuritySchemes) > 0 {
+		schemes := strings.Join(result.SkippedSecuritySchemes, "; ")
+		if len(result.ConfigurationSchema) > 0 && bytes.Contains(result.ConfigurationSchema, []byte(`"authentication"`)) {
+			e.log.Warn("Unsupported security schemes skipped; other authentication methods are still available",
+				"schemes", schemes)
+			e.rec.Eventf(cr, corev1.EventTypeWarning, "UnsupportedSecuritySchemes",
+				"skipped security scheme(s) not expressible in the Configuration CRD: %s", schemes)
+		} else {
+			e.log.Warn("No authentication method could be generated: this resource has NO way to supply a credential",
+				"schemes", schemes)
+			e.rec.Eventf(cr, corev1.EventTypeWarning, "NoAuthenticationGenerated",
+				"the OAS document declares only unsupported security scheme(s) (%s), so the generated Configuration CRD has no authentication field and every request will be unauthenticated", schemes)
+		}
 	}
 
 	res, err := crdgen.Generate(crdgen.Options{
