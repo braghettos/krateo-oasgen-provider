@@ -9,7 +9,15 @@ type OASSchemaGenerator struct {
 	generatorConfig *GeneratorConfig
 	resourceConfig  *ResourceConfig
 	doc             OASDocument
+	// skippedSecuritySchemes records security schemes the generator could not express, populated during
+	// configuration-schema generation. Surfaced by the caller as a warning and a condition: a resource whose
+	// only scheme was skipped has no way to authenticate, and today that is discovered via 401s.
+	skippedSecuritySchemes []string
 }
+
+// SkippedSecuritySchemes returns the security schemes that could not be generated, as
+// "<name> (type: <type>, in: <in>)". Empty unless GenerateConfigurationSchema has run.
+func (g *OASSchemaGenerator) SkippedSecuritySchemes() []string { return g.skippedSecuritySchemes }
 
 // NewOASSchemaGenerator creates a new, configured OASSchemaGenerator.
 func NewOASSchemaGenerator(doc OASDocument, config *GeneratorConfig, resourceConfig *ResourceConfig) *OASSchemaGenerator {
@@ -90,10 +98,11 @@ func (g *OASSchemaGenerator) Generate() (*GenerationResult, error) {
 	//log.Print("======= End Configuration Schema =======")
 
 	return &GenerationResult{
-		SpecSchema:          specSchema,
-		StatusSchema:        statusSchema,
-		ConfigurationSchema: configurationSchema,
-		GenerationWarnings:  generationWarnings,
-		ValidationWarnings:  validationWarnings,
+		SpecSchema:             specSchema,
+		StatusSchema:           statusSchema,
+		ConfigurationSchema:    configurationSchema,
+		GenerationWarnings:     generationWarnings,
+		SkippedSecuritySchemes: g.skippedSecuritySchemes,
+		ValidationWarnings:     validationWarnings,
 	}, nil
 }

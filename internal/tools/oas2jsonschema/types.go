@@ -182,6 +182,11 @@ type GenerationResult struct {
 	ConfigurationSchema []byte
 	GenerationWarnings  []error
 	ValidationWarnings  []error
+	// SkippedSecuritySchemes names security schemes that could not be expressed, as
+	// "<name> (type: <type>, in: <in>)". Separate from GenerationWarnings because it needs acting on rather
+	// than logging: when it is non-empty and no auth method was generated, the resource has no way to
+	// authenticate at all.
+	SkippedSecuritySchemes []string
 }
 
 type BasicAuth struct {
@@ -191,6 +196,35 @@ type BasicAuth struct {
 
 type BearerAuth struct {
 	TokenRef rtv1.SecretKeySelector `json:"tokenRef"`
+}
+
+// APIKeyAuth is the credential shape for an OAS `type: apiKey, in: header` security scheme: a value sent
+// verbatim in a header the document names.
+//
+// Header and ValuePrefix live here, on the Configuration CR, rather than being derived at request time,
+// because rest-dynamic-controller resolves authentication BEFORE the OAS is parsed — its definitiongetter
+// imports no OpenAPI library and the document model is built later, on the client. The declared header name
+// therefore has to travel oasgen -> CRD -> CR -> RDC like every other OAS-derived fact in this stack.
+type APIKeyAuth struct {
+	// TokenRef points at the Secret holding the credential VALUE ONLY, with no prefix. Keeping the wire
+	// format out of the Secret means a rotation path (ESO, a token endpoint) writes the raw credential and
+	// never has to know about HTTP framing.
+	TokenRef rtv1.SecretKeySelector `json:"tokenRef"`
+	// Header is the header the credential is sent in, defaulted from the security scheme's declared name
+	// when the document is unambiguous. It is a real field rather than a hidden constant so the value the
+	// generator derived is visible in the CR — which is what someone debugging a 401 needs.
+	Header string `json:"header"`
+	// ValuePrefix is prepended to the credential on the wire. Empty by default: OAS `apiKey` means "send
+	// this value", and there is no prefix concept in the specification.
+	//
+	// Set it to "Bearer " — INCLUDING THE TRAILING SPACE — for APIs that declare apiKey with an
+	// Authorization header but expect bearer framing. Without the space the wire value is "Bearerxyz",
+	// which fails identically to a wrong credential.
+	//
+	// It is deliberately NOT defaulted to "Bearer " on an Authorization header: a Secret already holding
+	// the full header value would then silently become "Bearer Bearer ...".
+	// +optional
+	ValuePrefix string `json:"valuePrefix,omitempty"`
 }
 
 // deepCopy creates a deep copy of the Schema.

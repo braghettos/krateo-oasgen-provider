@@ -81,10 +81,11 @@ func (g *OASSchemaGenerator) BuildConfigurationSchema() ([]byte, error) {
 		})
 	}
 
-	authMethodsSchemas, err := g.buildAuthMethodsSchemaMap()
+	authMethodsSchemas, skippedSchemes, err := g.buildAuthMethodsSchemaMap()
 	if err != nil {
 		return nil, fmt.Errorf("could not generate auth schemas for configuration: %w", err)
 	}
+	g.skippedSecuritySchemes = skippedSchemes
 	if len(authMethodsSchemas) > 0 {
 		addAuthMethods(rootSchema, authMethodsSchemas)
 	}
@@ -93,20 +94,52 @@ func (g *OASSchemaGenerator) BuildConfigurationSchema() ([]byte, error) {
 	return GenerateJsonSchema(rootSchema, g.generatorConfig)
 }
 
-// buildAuthMethodsSchemaMap generates the JSON schemas for the authentication methods.
-func (g *OASSchemaGenerator) buildAuthMethodsSchemaMap() (map[string]*Schema, error) {
+// buildAuthMethodsSchemaMap generates the JSON schemas for the authentication methods, and returns the
+// names of any schemes it could not generate.
+//
+// Those names are RETURNED rather than dropped because the failure was invisible: a document whose only
+// scheme is unsupported still yields a Configuration CRD — hasSecuritySchemes is len(SecuritySchemes()) > 0,
+// i.e. presence, not supportability — and addAuthMethods is then skipped because this map is empty. The
+// user gets a <Kind>Configuration that looks like where credentials go, with no authentication field in it,
+// and finds out via 401s. A CRD that lies is worse than no CRD.
+//
+// It is a warning rather than an error on purpose. Unlike a rejected requestTransform or poll path, the
+// user declared nothing here — the VENDOR's document mentions a scheme we cannot generate — and we cannot
+// know whether the endpoint actually enforces the scheme it advertises. Failing generation would break
+// anyone running an oauth2-declaring document against an endpoint that does not enforce it, whose only
+// recourse would be editing the vendor spec.
+func (g *OASSchemaGenerator) buildAuthMethodsSchemaMap() (map[string]*Schema, []string, error) {
+	schemes := g.doc.SecuritySchemes()
+
+	// A header default is only meaningful when exactly one apiKey scheme exists; with several there is no
+	// single correct answer, so the generated field stays required and the author chooses.
+	apiKeyCount := 0
+	for _, s := range schemes {
+		if s.Type == SchemeTypeAPIKey && s.In == "header" {
+			apiKeyCount++
+		}
+	}
+
 	schemaMap := make(map[string]*Schema)
-	for _, secScheme := range g.doc.SecuritySchemes() {
-		authSchema, err := createSchemaForSecurityScheme(secScheme)
-		if err != nil {
-			// Skip unsupported security schemes
-			// TODO: Consider logging a warning here.
-			//log.Printf("warning: skipping unsupported security scheme %s: %v", secScheme.Name, err)
+	var skipped []string
+	for _, secScheme := range schemes {
+		key, ok := authMethodKey(secScheme)
+		if !ok {
+			skipped = append(skipped, fmt.Sprintf("%s (type: %s, in: %s)", secScheme.Name, secScheme.Type, secScheme.In))
 			continue
 		}
-		schemaMap[secScheme.Scheme] = authSchema
+		defaultHeader := ""
+		if apiKeyCount == 1 {
+			defaultHeader = secScheme.ParamName
+		}
+		authSchema, err := createSchemaForSecurityScheme(secScheme, defaultHeader)
+		if err != nil {
+			skipped = append(skipped, fmt.Sprintf("%s (%v)", secScheme.Name, err))
+			continue
+		}
+		schemaMap[key] = authSchema
 	}
-	return schemaMap, nil
+	return schemaMap, skipped, nil
 }
 
 // addAuthMethods adds the `authentication` property to the configuration schema.
@@ -124,10 +157,36 @@ func addAuthMethods(schema *Schema, authSchemas map[string]*Schema) {
 	schema.Properties = append(schema.Properties, Property{Name: "authentication", Schema: authMethodsSchema})
 }
 
+// authMethodKey is the property name a scheme is exposed under within `authentication`, and the string
+// rest-dynamic-controller switches on (auth.ToType). It is derived from the scheme KIND, not from
+// SecuritySchemeInfo.Scheme: that sub-field is populated only for `type: http`, so keying by it would name
+// an apiKey scheme's property "" (the empty string).
+//
+// The vocabulary is deliberately closed — basic, bearer, apiKey. Deriving it from the document's own scheme
+// names (ApiKeyAuth, TokenAuth, ...) would make RDC's switch impossible without a second lookup table, and
+// would bake vendor naming into the CR schema, so a vendor rename would become a breaking CRD change here.
+func authMethodKey(info SecuritySchemeInfo) (string, bool) {
+	switch {
+	case info.Type == SchemeTypeHTTP && info.Scheme == "basic":
+		return "basic", true
+	case info.Type == SchemeTypeHTTP && info.Scheme == "bearer":
+		return "bearer", true
+	case info.Type == SchemeTypeAPIKey && info.In == "header":
+		return "apiKey", true
+	}
+	return "", false
+}
+
 // createSchemaForSecurityScheme generates the JSON schema for a given security scheme.
-// Note: currently only supports HTTP Basic and Bearer authentication schemes.
-// If the security scheme is not supported, it returns an error.
-func createSchemaForSecurityScheme(info SecuritySchemeInfo) (*Schema, error) {
+//
+// Supported: http/basic, http/bearer, and apiKey in a header. apiKey in query or cookie is deliberately not
+// supported — query in particular puts credentials in URLs and access logs — and neither is oauth2 or
+// openIdConnect; all of them are reported by the caller rather than dropped.
+//
+// defaultHeader is applied to the apiKey shape's `header` field when non-empty. The caller leaves it empty
+// when the document declares SEVERAL apiKey schemes, so the field stays required and the author says which
+// one they mean, instead of the generator picking one arbitrarily.
+func createSchemaForSecurityScheme(info SecuritySchemeInfo, defaultHeader string) (*Schema, error) {
 	if info.Type == SchemeTypeHTTP && info.Scheme == "basic" {
 		return reflectSchema(reflect.TypeOf(BasicAuth{}))
 	}
@@ -136,5 +195,36 @@ func createSchemaForSecurityScheme(info SecuritySchemeInfo) (*Schema, error) {
 		return reflectSchema(reflect.TypeOf(BearerAuth{}))
 	}
 
-	return nil, fmt.Errorf("unsupported security scheme type: %s", info.Type)
+	if info.Type == SchemeTypeAPIKey && info.In == "header" {
+		sch, err := reflectSchema(reflect.TypeOf(APIKeyAuth{}))
+		if err != nil {
+			return nil, err
+		}
+		applyAPIKeyHeaderDefault(sch, defaultHeader, info)
+		return sch, nil
+	}
+
+	return nil, fmt.Errorf("unsupported security scheme %q (type: %s, in: %s)", info.Name, info.Type, info.In)
+}
+
+// applyAPIKeyHeaderDefault sets the generated `header` property's default and description. With a single
+// apiKey scheme the default makes the field zero-config; with several the caller passes an empty
+// defaultHeader, leaving the author to choose.
+func applyAPIKeyHeaderDefault(sch *Schema, defaultHeader string, info SecuritySchemeInfo) {
+	for i := range sch.Properties {
+		if sch.Properties[i].Name != "header" || sch.Properties[i].Schema == nil {
+			continue
+		}
+		if defaultHeader != "" {
+			sch.Properties[i].Schema.Default = defaultHeader
+			sch.Properties[i].Schema.Description = fmt.Sprintf(
+				"Header the credential is sent in. Defaulted from security scheme %q, which declares %q.",
+				info.Name, defaultHeader)
+		} else {
+			sch.Properties[i].Schema.Description = "Header the credential is sent in. This document declares " +
+				"more than one apiKey scheme, so there is no single correct default: set this to the header of " +
+				"the scheme this configuration should use."
+		}
+		return
+	}
 }

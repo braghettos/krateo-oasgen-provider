@@ -216,3 +216,88 @@ func getNestedValue(data map[string]interface{}, path ...string) (interface{}, b
 	}
 	return current, true
 }
+
+// TestAPIKeySecurityScheme covers oasgen-provider#49: an OAS `type: apiKey, in: header` scheme must produce
+// a usable credential field. Before this it produced nothing at all — the Configuration CRD had no
+// `authentication` block, so there was no way to supply a credential and every request went out
+// unauthenticated, with no warning.
+func TestAPIKeySecurityScheme(t *testing.T) {
+	apiKey := func(name, header string) SecuritySchemeInfo {
+		return SecuritySchemeInfo{Name: name, Type: SchemeTypeAPIKey, In: "header", ParamName: header}
+	}
+
+	t.Run("keys by scheme KIND, not the empty Scheme field", func(t *testing.T) {
+		// SecuritySchemeInfo.Scheme is populated only for type: http, so keying by it would name this
+		// property "" — the bug this guards.
+		k, ok := authMethodKey(apiKey("ApiKeyAuth", "Authorization"))
+		require.True(t, ok)
+		assert.Equal(t, "apiKey", k)
+		k, ok = authMethodKey(SecuritySchemeInfo{Type: SchemeTypeHTTP, Scheme: "bearer"})
+		require.True(t, ok)
+		assert.Equal(t, "bearer", k)
+	})
+
+	t.Run("apiKey in query or cookie stays unsupported", func(t *testing.T) {
+		for _, in := range []string{"query", "cookie"} {
+			_, ok := authMethodKey(SecuritySchemeInfo{Name: "K", Type: SchemeTypeAPIKey, In: in})
+			assert.False(t, ok, "in: %s must not be silently accepted", in)
+		}
+	})
+
+	t.Run("single scheme defaults the header from the document", func(t *testing.T) {
+		sch, err := createSchemaForSecurityScheme(apiKey("ApiKeyAuth", "Authorization"), "Authorization")
+		require.NoError(t, err)
+		var hdr *Schema
+		for _, p := range sch.Properties {
+			if p.Name == "header" {
+				hdr = p.Schema
+			}
+		}
+		require.NotNil(t, hdr, "the generated shape must expose a header field")
+		assert.Equal(t, "Authorization", hdr.Default, "zero-config for an unambiguous document")
+	})
+
+	t.Run("several schemes leave header undefaulted so the author chooses", func(t *testing.T) {
+		sch, err := createSchemaForSecurityScheme(apiKey("ApiKeyAuth", "Authorization"), "")
+		require.NoError(t, err)
+		for _, p := range sch.Properties {
+			if p.Name == "header" {
+				assert.Nil(t, p.Schema.Default, "no single correct default when the document is ambiguous")
+				assert.Contains(t, p.Schema.Description, "more than one apiKey scheme")
+			}
+		}
+	})
+
+	t.Run("unsupported schemes are reported, not dropped", func(t *testing.T) {
+		g := &OASSchemaGenerator{doc: &stubSecDoc{schemes: []SecuritySchemeInfo{
+			{Name: "OAuth", Type: SchemeTypeOAuth2},
+			{Name: "ApiKeyAuth", Type: SchemeTypeAPIKey, In: "header", ParamName: "X-Api-Key"},
+		}}}
+		m, skipped, err := g.buildAuthMethodsSchemaMap()
+		require.NoError(t, err)
+		assert.Contains(t, m, "apiKey", "the supported one is still generated")
+		require.Len(t, skipped, 1)
+		assert.Contains(t, skipped[0], "OAuth", "the skipped one is named")
+	})
+
+	t.Run("two apiKey schemes collapse to one key with no default", func(t *testing.T) {
+		g := &OASSchemaGenerator{doc: &stubSecDoc{schemes: []SecuritySchemeInfo{
+			apiKey("A", "Authorization"), apiKey("B", "X-Api-Key"),
+		}}}
+		m, skipped, err := g.buildAuthMethodsSchemaMap()
+		require.NoError(t, err)
+		assert.Empty(t, skipped)
+		require.Len(t, m, 1, "one apiKey property, not two")
+		for _, p := range m["apiKey"].Properties {
+			if p.Name == "header" {
+				assert.Nil(t, p.Schema.Default, "must not arbitrarily pick one vendor scheme's header")
+			}
+		}
+	})
+}
+
+type stubSecDoc struct{ schemes []SecuritySchemeInfo }
+
+func (s *stubSecDoc) FindPath(string) (PathItem, bool)      { return nil, false }
+func (s *stubSecDoc) SecuritySchemes() []SecuritySchemeInfo { return s.schemes }
+func (s *stubSecDoc) Version() string                       { return "1.0" }
