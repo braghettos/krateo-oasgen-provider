@@ -13,6 +13,7 @@ jobs:
     name: Build and Push
     strategy:
       matrix:
+        mod: [oasgen-provider, rest-dynamic-controller]
         runner: [ubuntu-22.04-arm, ubuntu-22.04]
         include:
           - runner: ubuntu-22.04-arm
@@ -35,7 +36,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.GHCR_REPO }}
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.mod }}
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -51,6 +52,8 @@ jobs:
         id: build
         uses: docker/build-push-action@v5
         with:
+          context: go/${{ matrix.mod }}
+          file: go/${{ matrix.mod }}/Dockerfile
           platforms: ${{ matrix.platform }}
           push: false
           labels: ${{ steps.meta.outputs.labels }}
@@ -64,11 +67,14 @@ jobs:
   crds-drift:
     name: CRDs drift guard
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go/oasgen-provider
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: go/oasgen-provider/go.mod
       - name: Regenerate CRDs
         run: go generate ./apis/...
       - name: Fail if committed CRDs are out of date
