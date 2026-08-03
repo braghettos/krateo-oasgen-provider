@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	hasher "github.com/krateoplatformops/oasgen-provider/internal/tools/hash"
-	kubecli "github.com/krateoplatformops/oasgen-provider/internal/tools/kube"
-	"github.com/krateoplatformops/plumbing/kubeutil/rbacgen"
+	hasher "github.com/krateo-platformops/oasgen-provider/internal/tools/hash"
+	kubecli "github.com/krateo-platformops/oasgen-provider/internal/tools/kube"
+	"github.com/krateo-platformops/plumbing/kubeutil/rbacgen"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"

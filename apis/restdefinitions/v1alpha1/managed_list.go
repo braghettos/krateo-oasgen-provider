@@ -1,6 +1,6 @@
 package v1alpha1
 
-import "github.com/krateoplatformops/provider-runtime/pkg/resource"
+import "github.com/krateo-platformops/provider-runtime/pkg/resource"
 
 // GetItems of this RestDefinitionList.
 func (l *RestDefinitionList) GetItems() []resource.Managed {

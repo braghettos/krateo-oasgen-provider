@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/krateoplatformops/oasgen-provider/internal/tools/safety"
+	"github.com/krateo-platformops/oasgen-provider/internal/tools/safety"
 )
 
 const (

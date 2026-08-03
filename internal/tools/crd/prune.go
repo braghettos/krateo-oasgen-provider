@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/krateoplatformops/oasgen-provider/internal/tools/crd/generation"
+	"github.com/krateo-platformops/oasgen-provider/internal/tools/crd/generation"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"

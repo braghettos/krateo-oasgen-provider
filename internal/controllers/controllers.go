@@ -1,11 +1,11 @@
 package controllers
 
 import (
-	"github.com/krateoplatformops/provider-runtime/pkg/controller"
-	"github.com/krateoplatformops/provider-runtime/pkg/reconciler"
+	"github.com/krateo-platformops/provider-runtime/pkg/controller"
+	"github.com/krateo-platformops/provider-runtime/pkg/reconciler"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	repo "github.com/krateoplatformops/oasgen-provider/internal/controllers/restdefinition"
+	repo "github.com/krateo-platformops/oasgen-provider/internal/controllers/restdefinition"
 )
 
 // Setup creates all controllers with the supplied logger and adds them to

@@ -11,20 +11,20 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/krateoplatformops/oasgen-provider/internal/controllers"
-	"github.com/krateoplatformops/oasgen-provider/internal/tools/loghandler"
-	"github.com/krateoplatformops/plumbing/env"
+	"github.com/krateo-platformops/oasgen-provider/internal/controllers"
+	"github.com/krateo-platformops/oasgen-provider/internal/tools/loghandler"
+	"github.com/krateo-platformops/plumbing/env"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	"github.com/krateoplatformops/oasgen-provider/apis"
-	"github.com/krateoplatformops/provider-runtime/pkg/controller"
-	"github.com/krateoplatformops/provider-runtime/pkg/logging"
-	"github.com/krateoplatformops/provider-runtime/pkg/ratelimiter"
-	"github.com/krateoplatformops/provider-runtime/pkg/telemetry"
+	"github.com/krateo-platformops/oasgen-provider/apis"
+	"github.com/krateo-platformops/provider-runtime/pkg/controller"
+	"github.com/krateo-platformops/provider-runtime/pkg/logging"
+	"github.com/krateo-platformops/provider-runtime/pkg/ratelimiter"
+	"github.com/krateo-platformops/provider-runtime/pkg/telemetry"
 
-	oteltelemetry "github.com/krateoplatformops/oasgen-provider/internal/tools/telemetry"
+	oteltelemetry "github.com/krateo-platformops/oasgen-provider/internal/tools/telemetry"
 	"github.com/stoewer/go-strcase"
 )
 

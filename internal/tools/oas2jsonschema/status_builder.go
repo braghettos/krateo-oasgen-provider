@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	pathparsing "github.com/krateoplatformops/oasgen-provider/internal/tools/pathparsing"
-	"github.com/krateoplatformops/oasgen-provider/internal/tools/safety"
+	pathparsing "github.com/krateo-platformops/oasgen-provider/internal/tools/pathparsing"
+	"github.com/krateo-platformops/oasgen-provider/internal/tools/safety"
 )
 
 // BuildStatusSchema generates the complete status schema for a given resource.

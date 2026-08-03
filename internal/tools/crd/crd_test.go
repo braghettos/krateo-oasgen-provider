@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/krateoplatformops/oasgen-provider/internal/tools/plurals"
-	"github.com/krateoplatformops/plumbing/e2e"
-	xenv "github.com/krateoplatformops/plumbing/env"
+	"github.com/krateo-platformops/oasgen-provider/internal/tools/plurals"
+	"github.com/krateo-platformops/plumbing/e2e"
+	xenv "github.com/krateo-platformops/plumbing/env"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"

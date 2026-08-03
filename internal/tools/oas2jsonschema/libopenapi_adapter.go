@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/krateoplatformops/oasgen-provider/internal/tools/safety"
+	"github.com/krateo-platformops/oasgen-provider/internal/tools/safety"
 	"github.com/pb33f/libopenapi"
 
 	"github.com/pb33f/libopenapi/datamodel/high/base"
