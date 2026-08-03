@@ -29,18 +29,11 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        mod: [oasgen-provider, rest-dynamic-controller]
-    defaults:
-      run:
-        working-directory: go/${{ matrix.mod }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go/${{ matrix.mod }}/go.mod
+          go-version-file: go.mod
       - name: Gather dependencies
         run: go mod download
       - name: Run coverage

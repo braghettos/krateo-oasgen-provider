@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ "{{" }} .name {{ "}}" }}
+  namespace: {{ "{{" }} .namespace {{ "}}" }}
+  labels:
+    app.kubernetes.io/name: {{ "{{" }} trunc 63 .name {{ "}}" }}
+    app.kubernetes.io/instance: {{ "{{" }} trunc 63 .resource {{ "}}" }}
+    app.kubernetes.io/version: {{ "{{" }} trunc 63 .apiVersion {{ "}}" }}
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/part-of: krateoplatformops
+    app.kubernetes.io/managed-by: krateo
+spec:
+  {{- if not .Values.rdc.autoscaling.enabled }}
+  replicas: {{ .Values.rdc.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ "{{" }} trunc 63 .name {{ "}}" }}
+  template:
+    metadata:
+      name: {{ "{{" }} .name {{ "}}" }}
+      namespace: {{ "{{" }} .namespace {{ "}}" }}
+      labels:
+        app.kubernetes.io/name: {{ "{{" }} trunc 63 .name {{ "}}" }}
+    spec:
+      serviceAccountName: {{ "{{" }} .serviceAccountName {{ "}}" }}
+      securityContext:
+        {{- toYaml .Values.rdc.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ "{{" }} .resource {{ "}}" }}-{{ "{{" }} .apiVersion {{ "}}" }}-controller
+          image: "{{ .Values.rdc.image.repository }}:{{ .Values.rdc.image.tag | default "0.1.2" }}"
+          imagePullPolicy: {{ .Values.rdc.image.pullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: {{ "{{" }} .name {{ "}}" }}-configmap
+          securityContext:
+            {{- toYaml .Values.rdc.securityContext | nindent 12 }}
+          args:
+            - -group={{ "{{" }} .apiGroup {{ "}}" }}
+            - -version={{ "{{" }} .apiVersion {{ "}}" }}
+            - -resource={{ "{{" }} .resource {{ "}}" }} 
+            {{/* - -namespace={{ "{{" }} .namespace {{ "}}" }} # Leave empty to watch all namespaces */}}
+          ports:
+            - name: http
+              containerPort: {{ .Values.rdc.service.port }}
+              protocol: TCP
+          livenessProbe:
+            {{- toYaml .Values.rdc.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.rdc.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.rdc.resources | nindent 12 }}
+      {{- with .Values.rdc.volumeMounts }}
+          volumeMounts:
+            {{- toYaml . | nindent 12 }}
+      {{- end }}
+      {{- with .Values.rdc.volumes }}
+      volumes:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.rdc.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.rdc.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.rdc.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
