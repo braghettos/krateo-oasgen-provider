@@ -4,8 +4,11 @@
 
 replicaCount: 1
 
+global:
+  imageRegistry: ""
 image:
-  repository: ghcr.io/krateo-platformops/oasgen-provider
+  registry: ghcr.io
+  repository: krateo-platformops/oasgen-provider
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
   tag: ""
@@ -105,7 +108,8 @@ affinity: {}
 
 rdc:
   image:
-    repository: ghcr.io/krateo-platformops/rest-dynamic-controller
+    registry: ghcr.io
+    repository: krateo-platformops/rest-dynamic-controller
     pullPolicy: IfNotPresent
     # NOTE: hand-maintained. The release workflow's APP_VERSION substitution applies to
     # Chart.yaml only, never to values.yaml, so this tag does NOT auto-track RDC releases —
