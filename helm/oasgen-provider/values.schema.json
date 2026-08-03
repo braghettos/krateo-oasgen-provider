@@ -14,6 +14,10 @@
       "title": "Controller image",
       "additionalProperties": false,
       "properties": {
+        "registry": {
+          "type": "string",
+          "title": "Image registry"
+        },
         "repository": {
           "type": "string",
           "title": "Image repository"
@@ -230,6 +234,10 @@
           "title": "rdc image",
           "additionalProperties": false,
           "properties": {
+            "registry": {
+              "type": "string",
+              "title": "Image registry"
+            },
             "repository": {
               "type": "string",
               "title": "Image repository"
@@ -471,7 +479,14 @@
     "global": {
       "type": "object",
       "title": "Global values",
-      "description": "Helm global values (injected when this chart is used as a subchart)."
+      "description": "Helm global values (injected when this chart is used as a subchart).",
+      "properties": {
+        "imageRegistry": {
+          "type": "string",
+          "title": "Global image registry",
+          "description": "Overrides the host of every container image (repository paths preserved)."
+        }
+      }
     },
     "livenessProbe": {
       "type": "object",

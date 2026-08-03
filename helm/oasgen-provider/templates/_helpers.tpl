@@ -51,6 +51,21 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
+Image reference honoring an optional global.imageRegistry override (host-only; repository paths
+preserved). Canonical helper — identical across all Krateo charts.
+*/}}
+{{- define "krateo.image" -}}
+{{- $g := .global | default dict -}}
+{{- $registry := $g.imageRegistry | default .img.registry -}}
+{{- $tag := .img.tag | default .defaultTag -}}
+{{- if $registry -}}
+{{- printf "%s/%s:%s" $registry .img.repository $tag -}}
+{{- else -}}
+{{- printf "%s:%s" .img.repository $tag -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Create the name of the service account to use
 */}}
 {{- define "oasgen-provider.serviceAccountName" -}}
