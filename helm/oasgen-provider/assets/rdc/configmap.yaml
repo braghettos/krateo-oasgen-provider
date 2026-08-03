@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ "{{" }} .name {{ "}}" }}-configmap
+  namespace: {{ "{{" }} .namespace {{ "}}" }}
+  labels:
+    app.kubernetes.io/name: {{ "{{" }} trunc 63 .name {{ "}}" }}
+    app.kubernetes.io/instance: {{ "{{" }} trunc 63 .resource {{ "}}" }}
+    app.kubernetes.io/version: {{ "{{" }} trunc 63 .apiVersion {{ "}}" }}
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/part-of: krateoplatformops
+    app.kubernetes.io/managed-by: krateo
+data:
+  REST_CONTROLLER_SERVICEACCOUNT_NAME: {{ "{{" }} .composition_controller_sa_name {{ "}}" }}
+  REST_CONTROLLER_SERVICEACCOUNT_NAMESPACE: {{ "{{" }} .composition_controller_sa_namespace {{ "}}" }}
+  # home should be set to /tmp or any other writable directory to avoid permission issues with helm https://github.com/helm/helm/issues/8038
+  HOME: /tmp
+  {{- range $key, $value := .Values.rdc.env }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
