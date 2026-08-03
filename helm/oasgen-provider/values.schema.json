@@ -14,6 +14,12 @@
       "title": "Controller image",
       "additionalProperties": false,
       "properties": {
+        "registry": {
+          "type": "string",
+          "title": "Image registry host",
+          "description": "Registry host; overridden by global.imageRegistry when set.",
+          "default": "ghcr.io"
+        },
         "repository": {
           "type": "string",
           "title": "Image repository"
@@ -230,6 +236,12 @@
           "title": "rdc image",
           "additionalProperties": false,
           "properties": {
+            "registry": {
+              "type": "string",
+              "title": "Image registry host",
+              "description": "Registry host; overridden by global.imageRegistry when set.",
+              "default": "ghcr.io"
+            },
             "repository": {
               "type": "string",
               "title": "Image repository"
@@ -471,7 +483,15 @@
     "global": {
       "type": "object",
       "title": "Global values",
-      "description": "Helm global values (injected when this chart is used as a subchart)."
+      "description": "Helm global values (injected when this chart is used as a subchart).",
+      "properties": {
+        "imageRegistry": {
+          "type": "string",
+          "title": "Global image registry override",
+          "description": "When set, replaces the registry host of every image in the chart. Repository paths preserved.",
+          "default": ""
+        }
+      }
     },
     "livenessProbe": {
       "type": "object",
