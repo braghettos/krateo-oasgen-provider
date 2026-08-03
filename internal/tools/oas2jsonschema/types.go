@@ -3,7 +3,7 @@ package oas2jsonschema
 import (
 	"time"
 
-	rtv1 "github.com/krateoplatformops/provider-runtime/apis/common/v1"
+	rtv1 "github.com/krateo-platformops/provider-runtime/apis/common/v1"
 )
 
 // GeneratorConfig holds configuration options for the schema generator.

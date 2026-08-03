@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	definitionv1alpha1 "github.com/krateoplatformops/oasgen-provider/apis/restdefinitions/v1alpha1"
-	"github.com/krateoplatformops/oasgen-provider/internal/tools/deploy"
+	definitionv1alpha1 "github.com/krateo-platformops/oasgen-provider/apis/restdefinitions/v1alpha1"
+	"github.com/krateo-platformops/oasgen-provider/internal/tools/deploy"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 )

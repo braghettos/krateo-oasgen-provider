@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/krateoplatformops/oasgen-provider/internal/tools/safety"
+	"github.com/krateo-platformops/oasgen-provider/internal/tools/safety"
 )
 
 // getPrimaryType returns the primary type from a slice of types.

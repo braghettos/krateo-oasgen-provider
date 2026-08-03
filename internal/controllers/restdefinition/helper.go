@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	definitionv1alpha1 "github.com/krateoplatformops/oasgen-provider/apis/restdefinitions/v1alpha1"
-	"github.com/krateoplatformops/oasgen-provider/internal/tools/oas2jsonschema"
+	definitionv1alpha1 "github.com/krateo-platformops/oasgen-provider/apis/restdefinitions/v1alpha1"
+	"github.com/krateo-platformops/oasgen-provider/internal/tools/oas2jsonschema"
 )
 
 // toDomainFieldMapping converts a RestDefinition verb's field mappings into the library-agnostic

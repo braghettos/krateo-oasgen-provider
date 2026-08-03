@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/krateoplatformops/oasgen-provider/internal/tools/crd/generation"
+	"github.com/krateo-platformops/oasgen-provider/internal/tools/crd/generation"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"

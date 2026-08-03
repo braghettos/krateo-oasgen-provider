@@ -1,4 +1,4 @@
-module github.com/krateoplatformops/oasgen-provider
+module github.com/krateo-platformops/oasgen-provider
 
 go 1.25.6
 
@@ -8,8 +8,8 @@ require (
 	github.com/go-andiamo/splitter v1.2.5
 	github.com/go-logr/logr v1.4.3
 	github.com/gobuffalo/flect v1.0.3
-	github.com/krateoplatformops/plumbing v1.12.0
-	github.com/krateoplatformops/provider-runtime v1.2.2
+	github.com/krateo-platformops/plumbing v1.13.0
+	github.com/krateo-platformops/provider-runtime v1.3.0
 	github.com/pb33f/libopenapi v0.16.8
 	github.com/stoewer/go-strcase v1.3.0
 	github.com/stretchr/testify v1.11.1
@@ -132,7 +132,3 @@ require (
 )
 
 replace github.com/pb33f/libopenapi => github.com/krateoplatformops/libopenapi v0.21.8
-
-replace github.com/krateoplatformops/plumbing => github.com/braghettos/plumbing v1.12.0
-
-replace github.com/krateoplatformops/provider-runtime => github.com/braghettos/provider-runtime v1.2.2

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/krateoplatformops/oasgen-provider/internal/tools/text"
+	"github.com/krateo-platformops/oasgen-provider/internal/tools/text"
 )
 
 // Note: currently the Configuration CRD has no status subresource.

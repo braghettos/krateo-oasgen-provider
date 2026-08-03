@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	pathparsing "github.com/krateoplatformops/oasgen-provider/internal/tools/pathparsing"
+	pathparsing "github.com/krateo-platformops/oasgen-provider/internal/tools/pathparsing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

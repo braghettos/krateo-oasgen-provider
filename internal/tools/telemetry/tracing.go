@@ -11,7 +11,7 @@ package telemetry
 import (
 	"context"
 
-	"github.com/krateoplatformops/provider-runtime/pkg/logging"
+	"github.com/krateo-platformops/provider-runtime/pkg/logging"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
@@ -21,7 +21,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-const tracerName = "github.com/krateoplatformops/oasgen-provider"
+const tracerName = "github.com/krateo-platformops/oasgen-provider"
 
 // SetupTracing configures an OTLP trace pipeline and installs the W3C propagator. It is a
 // no-op (returning a working no-op shutdown) when tracingEnabled is false, so callers wire it

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/krateoplatformops/oasgen-provider/internal/tools/objects/templates"
+	"github.com/krateo-platformops/oasgen-provider/internal/tools/objects/templates"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer/json"
