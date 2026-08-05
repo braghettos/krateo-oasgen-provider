@@ -34,7 +34,7 @@ jobs:
       contents: read
       packages: write
     with:
-      modules: '[{"mod":"oasgen-provider","context":"go/oasgen-provider"},{"mod":"rest-dynamic-controller","context":"go/rest-dynamic-controller"}]'
+      modules: '[{"mod":"oasgen-provider","context":"go/oasgen-provider"}]'
   crds:
     name: Generate & publish crds-subchart
     runs-on: ubuntu-latest
