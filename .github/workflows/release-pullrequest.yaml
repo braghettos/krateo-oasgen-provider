@@ -5,64 +5,22 @@ on:
     branches:
       - main
 
-env:
-  GHCR_REPO: ghcr.io/${{ github.repository }}
-
+# oasgen-provider is a Go MONOREPO (go/oasgen-provider + go/rest-dynamic-controller). The image
+# build now uses the shared reusable (component-image-build, push:false) instead of the previous
+# inline docker matrix — one source of truth, folded-aware. Only oasgen-provider publishes an image
+# here (rest-dynamic-controller builds from its own repo since the dedup). The Go suite stays in the
+# shared local test.yaml (one definition across the PR, push-to-main and release-tag triggers so
+# they cannot drift), and the oasgen-specific CRD-drift guard is unchanged.
 jobs:
   build:
-    name: Build and Push
-    strategy:
-      matrix:
-        mod: [oasgen-provider, rest-dynamic-controller]
-        runner: [ubuntu-22.04-arm, ubuntu-22.04]
-        include:
-          - runner: ubuntu-22.04-arm
-            platform: linux/arm64
-          - runner: ubuntu-22.04
-            platform: linux/amd64
-    runs-on: ${{ matrix.runner }}
-
+    uses: krateo-platformops/.github/.github/workflows/component-image-build.yaml@main
     permissions:
       contents: read
       packages: write
+    with:
+      modules: '[{"mod":"oasgen-provider","context":"go/oasgen-provider"}]'
+      push: false
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Prepare
-        run: |
-          platform=${{ matrix.platform }}
-          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
-
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.mod }}
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and NOT push
-        id: build
-        uses: docker/build-push-action@v5
-        with:
-          context: go/${{ matrix.mod }}
-          file: go/${{ matrix.mod }}/Dockerfile
-          platforms: ${{ matrix.platform }}
-          push: false
-          labels: ${{ steps.meta.outputs.labels }}
-
-  # The suite itself lives in test.yaml, the single definition shared with the push-to-main trigger
-  # and with release-tag.yaml's release gate — so the three cannot drift apart.
   test:
     uses: ./.github/workflows/test.yaml
     secrets: inherit
