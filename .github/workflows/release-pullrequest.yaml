@@ -12,6 +12,11 @@ on:
 # shared local test.yaml (one definition across the PR, push-to-main and release-tag triggers so
 # they cannot drift), and the oasgen-specific CRD-drift guard is unchanged.
 jobs:
+  lint-docs:
+    uses: krateo-platformops/.github/.github/workflows/lint-docs.yaml@main
+    permissions:
+      contents: read
+
   build:
     uses: krateo-platformops/.github/.github/workflows/component-image-build.yaml@main
     permissions:

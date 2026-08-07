@@ -1,6 +1,21 @@
+---
+type: Example
+title: Real-world RestDefinition manifests
+description: Edge-case RestDefinition examples — requestFieldMapping to nested status fields, dot-escaped excludedSpecFields, identifiersMatchPolicy AND.
+resource: restdefinitions.ogen.krateo.io
+tags: [kog, restdefinition, examples]
+timestamp: 2026-08-07T00:00:00Z
+---
+
 # Real-world Examples of RestDefinition Manifests
 
 This document provides real-world examples of `RestDefinition` manifests used with the OASGen Provider. These examples illustrate various use cases and configurations to help users understand how to create their own `RestDefinition` resources effectively and leverage all the features provided by the OASGen Provider and the Rest Dynamic Controller.
+
+> Note: these examples use `requestFieldMapping`, which is still accepted but
+> **deprecated** in favor of the unified `fieldMapping` (same request-direction anchors
+> plus `inResponse`, value transforms and resolvers) — see
+> [api.md](./api.md#per-verb-tuning-verbsdescription-items). Each `requestFieldMapping`
+> entry is treated as an equivalent request-direction `fieldMapping` entry at load time.
 
 ## `requestFieldMapping` Example 1
 

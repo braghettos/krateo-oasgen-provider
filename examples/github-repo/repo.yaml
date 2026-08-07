@@ -1,0 +1,18 @@
+# A Repo instance: creates a real repository in the given GitHub org.
+# Edit `org` (an org your token can create repos in) before applying.
+apiVersion: github.ogen.krateo.io/v1alpha1
+kind: Repo
+metadata:
+  name: gh-repo-1
+  namespace: gh-system
+  annotations:
+    krateo.io/connector-verbose: "true"
+spec:
+  configurationRef:
+    name: my-repo-config
+    namespace: gh-system
+  org: my-github-org
+  name: krateo-test-repo
+  description: A short description of the repository set by Krateo
+  visibility: public
+  has_issues: true

@@ -8,16 +8,16 @@
 # that does ship, and three separate bugs came out of the divergence. krateo-core-provider spawns its
 # CDCs by the identical mechanism and has never carried such a copy.
 #
-# Consequence worth knowing: the RDC templates can no longer be edited from this repo. Change them in
-# krateo-oasgen-provider-chart (chart/assets/rdc/) and point CHART at that working tree — see
-# docs/development/workflow.md, which covers the one wrinkle (a chart working tree carries CI
+# Consequence worth knowing: the RDC templates are chart content. Change them in this repo's
+# helm/oasgen-provider/assets/rdc/ and point CHART at a rendered copy of that chart — see
+# docs/development/workflow.md, which covers the one wrinkle (the chart working tree carries CI
 # placeholders that helm refuses to install).
 
 set -euo pipefail
 
 NAMESPACE="${NAMESPACE:-demo-system}"
 RELEASE="${RELEASE:-oasgen-provider}"
-CHART="${CHART:-oci://ghcr.io/braghettos/krateo/krateo-oasgen-provider}"
+CHART="${CHART:-oci://ghcr.io/krateo-platformops/charts/oasgen-provider}"
 
 PROJECT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." &>/dev/null && pwd)
 cd "$PROJECT_DIR"
