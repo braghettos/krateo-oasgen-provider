@@ -25,7 +25,9 @@ Curated history (notable changes, decisions); release notes stay in GitHub Relea
 ## 2026-08-02 — 0.19.0
 - apiKey-in-header authentication: the generated Configuration CRD gains
   `authentication.apiKey` (`tokenRef` + `header` + optional `valuePrefix`); unsupported
-  security schemes now fail CRD generation instead of being skipped silently (#49).
+  security schemes are no longer skipped silently — generation still proceeds, but the
+  provider warns and emits a Warning event (`NoAuthenticationGenerated` when no scheme
+  could be generated at all) (#49).
   Joint contract with rest-dynamic-controller 0.19.0 (the chart pin).
 
 ## 2026-08-01 — 0.18.0

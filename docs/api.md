@@ -92,12 +92,15 @@ web service absorbs the rest (see [overview](./overview.md#when-a-plugin-wrapper
 ## Delegated verbs (`*ApiRef`)
 
 `observeApiRef`/`createApiRef`/`updateApiRef`/`deleteApiRef` delegate a verb to a
-**snowplow RESTAction** (`name` + `namespace`, optional static `extras`; the controller
-passes the CR's name/namespace/uid — plus the whole spec for create/update/delete, or the
-identifier values for observe — as request extras and projects the composed `.status`
-back). RESTActions must be idempotent. CEL-enforced composition rules: `createApiRef`
-requires a `get`/`findby` verb **or** an `observeApiRef` with `notFoundExpr` (level-based
-convergence needs an observe that can report absence); `notFoundExpr`/`upToDateExpr` are
+**snowplow RESTAction** (`name` + `namespace`, optional static `extras`; on every
+delegated verb the controller passes the CR's name/namespace/uid, its declared
+identifier values and its whole spec as request extras, and projects the composed
+`.status` back for observe/create/update). RESTActions must be idempotent. CEL-enforced
+composition rules: `createApiRef` always requires a `get` or `findby` verb (so the
+controller can verify the create converged — level-based convergence); additionally,
+combining `createApiRef` with `observeApiRef` requires `observeApiRef.notFoundExpr` (so
+the delegated observe can report absence and trigger the create);
+`notFoundExpr`/`upToDateExpr` are
 gojq boolean predicates over `{spec, status}` for observe delegation. Using these fields
 requires the RDC's `URL_SNOWPLOW`/`URL_AUTHN` env to be set
 (see [configuration.md](./configuration.md)).
@@ -132,8 +135,9 @@ a type mismatch between CRD schema and actual API response surfaces as a
 ## Authentication
 
 Declared via `securitySchemes` in the OAS document; three schemes are supported (a
-document declaring only unsupported schemes fails CRD generation rather than being
-skipped silently):
+document declaring only unsupported schemes still generates the CRDs, but the
+Configuration CRD carries no `authentication` field; the provider warns and emits a
+`NoAuthenticationGenerated` Warning event rather than failing):
 
 1. **Bearer token** (`type: http`, `scheme: bearer`) → `authentication.bearer.tokenRef`.
 2. **Basic auth** (`type: http`, `scheme: basic`) → `authentication.basic.usernameRef`/`passwordRef`.
