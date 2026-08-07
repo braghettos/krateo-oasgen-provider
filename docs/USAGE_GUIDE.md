@@ -1,3 +1,12 @@
+---
+type: Usage
+title: KOG usage guide
+description: Step-by-step walkthroughs — a GitHub Repo provider end-to-end, and the extended TeamRepo case that requires a plugin web service.
+resource: oci://ghcr.io/krateo-platformops/charts/oasgen-provider
+tags: [kog, guide, walkthrough]
+timestamp: 2026-08-07T00:00:00Z
+---
+
 # Krateo Operator Generator (KOG) Usage Guide
 
 _(KOG = `oasgen-provider` + `rest-dynamic-controller`)_
@@ -31,13 +40,13 @@ In this case, you can create a web service that acts as a bridge between the Kra
 
 The OAS should include the following information:
 
-- **Servers**: The `servers` field (at root level of the OAS) should define the base URL for the API endpoints you want to use. This is important for the provider to know where to send requests. Note that you can override the base URL in the OAS if you want to use a different URL for the API endpoints; refer [the a following section](#step-7-update-the-restdefinition-to-use-the-web-service) for more information.
+- **Servers**: The `servers` field (at root level of the OAS) should define the base URL for the API endpoints you want to use. This is important for the provider to know where to send requests. Note that you can override the base URL in the OAS if you want to use a different URL for the API endpoints; refer to [the following section](#step-7-update-the-oas-to-use-the-web-service) for more information.
 
-- **API endpoints (paths)**: It should contain the paths for the API endpoints you want to use, including the HTTP methods (GET, POST, PUT, DELETE) and any parameters required by the endpoints. Note that it is important to specify whether the parameters are required or optional, as this will affect the generated CRDs and controllers. To learn more about how these paths are used by `rest-dynamic-controller`, refer to the [RestDefinition section](../README.md#restdefinition) of the README. Note that any endpoint should have consistent behavior and whenever this is not the case, there may be the need to implmenent a plugin web server to normalize and fix the behavior of the API endpoints.
+- **API endpoints (paths)**: It should contain the paths for the API endpoints you want to use, including the HTTP methods (GET, POST, PUT, DELETE) and any parameters required by the endpoints. Note that it is important to specify whether the parameters are required or optional, as this will affect the generated CRDs and controllers. To learn more about how these paths are used by `rest-dynamic-controller`, refer to the [RestDefinition contract](./api.md). Note that any endpoint should have consistent behavior and whenever this is not the case, there may be the need to implmenent a plugin web server to normalize and fix the behavior of the API endpoints.
 
 - **Request and response schemas**: It should define the request and response schemas for each endpoint, including the data types and any validation rules.
 
-- **Authentication**: If the API requires authentication, you should define the security schemes in the `components` section of the OAS. This is important for the provider to know how to authenticate requests to the API. You can see supported authentication methods [here](../README.md#authentication).
+- **Authentication**: If the API requires authentication, you should define the security schemes in the `components` section of the OAS. This is important for the provider to know how to authenticate requests to the API. You can see supported authentication methods [here](./api.md#authentication).
 
 Also note that any modification to the request or response schemas made by the API provider will require you to update the OAS accordingly, as the provider will generate the CRDs and controllers based on the OAS. Also consider removing the RestDefinition and recreating it with the updated OAS to ensure that the provider generates the correct CRDs and controllers (this is not necessary if you do not make changes to the request body or path parameters, as `oasgen-provider` won't need to update the generated CRD).
 
@@ -76,6 +85,27 @@ components:
 +     scheme: basic
 ```
 
+- **API key in a header**
+
+```diff
+openapi: 3.0.3
+servers:
+  - url: https://api.example.com
+paths:
+  ...
+components:
++ securitySchemes:
++   apiKeyAuth: # this field name can be anything
++     type: apiKey
++     in: header  # only `header` is supported (query/cookie would put credentials in URLs)
++     name: X-API-Key
+```
+
+The generated Configuration CRD then exposes `authentication.apiKey` with `tokenRef` (the
+raw credential in a Secret), `header` (defaulted from the scheme when the document
+declares exactly one apiKey scheme) and an optional `valuePrefix` — see
+[api.md](./api.md#authentication).
+
 ## Simple Case: External APIs Compatible with K8s Resource Management
 
 This guide provides a step-by-step approach to generating a provider for managing GitHub repositories using the Krateo Operator Generator (KOG). It assumes you have a basic understanding of Kubernetes and OpenAPI specifications.
@@ -112,16 +142,16 @@ components:
    ```
 
 2. Store your OAS as a ConfigMap: 
-In this example, we use a sample OAS for GitHub repositories stored in [`samples/usage_guide/assets/repo.yaml`](../samples/usage_guide/assets/repo.yaml) of this repository.
+In this example, we use a sample OAS for GitHub repositories stored in [`go/oasgen-provider/samples/usage_guide/assets/repo.yaml`](../go/oasgen-provider/samples/usage_guide/assets/repo.yaml) of this repository.
    ```sh
-   kubectl create configmap repo --from-file=samples/usage_guide/assets/repo.yaml -n gh-system
+   kubectl create configmap repo --from-file=go/oasgen-provider/samples/usage_guide/assets/repo.yaml -n gh-system
    ```
 
 ### Step 3: Create RestDefinition for GitHub Repositories
 
 In order to create a RestDefinition for GitHub repositories, you need to define the `resourceGroup`, `kind`, and the verbs that the controller will support. 
 The `oasPath` should point to the ConfigMap containing your OAS. 
-You can learn more about the `RestDefinition` resource [here](../README.md#restdefinition).
+You can learn more about the `RestDefinition` resource [here](./api.md).
 
 ```bash
 cat <<EOF | kubectl apply -f -
@@ -383,12 +413,12 @@ components:
 
 2. Store your OAS as a ConfigMap (in this example, we use a sample OAS for GitHub teamrepos stored in assets of this repository):
    ```sh
-   kubectl create configmap teamrepo --from-file=samples/usage_guide/assets/teamrepo_no_ws.yaml -n gh-system
+   kubectl create configmap teamrepo --from-file=go/oasgen-provider/samples/usage_guide/assets/teamrepo_no_ws.yaml -n gh-system
    ```
 
 ### Step 3: Create RestDefinition for GitHub TeamRepos
 
-In order to create a RestDefinition for GitHub teamrepos, you need to define the resource group, resource kind, and the verbs that the controller will support. The `oasPath` should point to the ConfigMap containing your OAS. You can learn more about the `RestDefinition` resource [here](README.md#restdefinition-specifications).
+In order to create a RestDefinition for GitHub teamrepos, you need to define the resource group, resource kind, and the verbs that the controller will support. The `oasPath` should point to the ConfigMap containing your OAS. You can learn more about the `RestDefinition` resource [here](./api.md).
 
 ```bash
 cat <<EOF | kubectl apply -f -
@@ -546,25 +576,23 @@ Events:
   Normal  CreatedExternalResource  86s         Successfully requested creation of external resource
 ```
 
-This message indicates that the controller was able to create the teamrepo in GitHub, but the response body from the GitHub API is nil. This is expected behavior as described [here](https://docs.github.com/en/rest/teams/teams?apiVersion=2022-11-28#check-team-permissions-for-a-repository). According to the GitHub API documentation, the response body for this endpoint is empty when the request is successful but the accept header isn't set to `application/vnd.github.v3+json`. This is a known limitation of the GitHub API, and it's not possible to change the accept header for requests made by the `rest-dynamic-controller` directly.
+This message indicates that the controller was able to create the teamrepo in GitHub, but the response body from the GitHub API is nil. This is expected behavior as described [here](https://docs.github.com/en/rest/teams/teams?apiVersion=2022-11-28#check-team-permissions-for-a-repository). According to the GitHub API documentation, the response body for this endpoint is empty when the request is successful but the accept header isn't set to `application/vnd.github.v3+json`.
 
-To add the header to the request, we need to implement a web service that handles API calls to the GitHub API. The web service will be responsible for adding the header to the request and returning the response body, since the `rest-dynamic-controller` doesn't support adding headers to requests made to external APIs.
+Note: current `oasgen-provider`/`rest-dynamic-controller` versions can inject static headers declaratively — `verbsDescription[].headers` in the RestDefinition (see [api.md](./api.md#per-verb-tuning-verbsdescription-items)) — so the accept-header half of this problem no longer requires a plugin on its own. This walkthrough keeps the plugin because the response-body problems below are behavioural, not just representational.
 
-In addition to the header issue, the response body from the GitHub API for this endpoint is also not in a format that is compatible with the `rest-dynamic-controller`. The response body contains uses a legacy format for permission values and the controller won't be able to compare the fields in the response body with the fields in the custom resource. Therefore, the web service normalizes permission values (write → push, read → pull).
+The response body from the GitHub API for this endpoint is not in a format that is compatible with the `rest-dynamic-controller`. The response body uses a legacy format for permission values and the controller won't be able to compare the fields in the response body with the fields in the custom resource. Therefore, the web service normalizes permission values (write → push, read → pull).
 
 Moreover, the `owner` field in the response body is not on the same level as the other fields in the custom resource, which makes it impossible for the `rest-dynamic-controller` to compare the fields correctly. The web service will also flatten the response body to bring the `owner` field to the root level.
 
-More information about the web service endpoint can be found [here](https://github.com/krateoplatformops/github-rest-dynamic-controller-plugin/blob/main/README.md#get-teamrepo-permission)
-
-Note: with a recent update of `oasgen-provider` and `rest-dynamic-controller`, it is now possible to add custom headers to the requests made to the external API by using configuration resources (e.g., `TeamRepoConfiguration`). However, this feature is not sufficient in this case because the response body from the GitHub API is still not in a format that is compatible with the `rest-dynamic-controller`. Therefore, we still need to implement a web service to handle the response body.
+(A reference implementation of this plugin, `github-rest-dynamic-controller-plugin`, exists but has not been migrated to the `krateo-platformops` org yet, so it is deliberately not linked here; treat the deployment below as the pattern and supply your own image.)
 
 ### Step 6: Create the Web Service for TeamRepo Management
 
 At this point, we need to implement a web service that handles API calls to the GitHub API. In this case, the web service will only be responsible for the `get` operation for teamrepos, because the `create`, `delete`, and `update` operations are handled directly by the controller without any additional processing.
 
-To handle this case, we've implemented a web service that handles the `get` operation for teamrepos. You can check the implementation at this link: [GitHub Plugin for rest-dynamic-controller](https://github.com/krateoplatformops/github-rest-dynamic-controller-plugin/blob/main/internal/handlers/teamRepo/teamRepo.go). You can also check the [README](https://github.com/krateoplatformops/github-rest-dynamic-controller-plugin/blob/main/README.md) for more information on running and why it has been implemented.
+To handle this case, we've implemented a web service that handles the `get` operation for teamrepos (the reference implementation, `github-rest-dynamic-controller-plugin`, is not yet migrated to the `krateo-platformops` org — see the note above).
 
-**Note:** `rest-dynamic-controller` to check if the CR is up-to-date or not, checks the fields in the CR (spec and status) against the fields in the response body from the external API. **It compare the fields at the same level**, so if the response fields are more nested than the fields in the CR, it will not be able to compare them correctly. This is why we need to implement a web service that returns the response body with the same structure as the CR. This problem is quite common and a specific solution has been described [here](https://github.com/krateoplatformops/github-rest-dynamic-controller-plugin/blob/main/README.md#get-teamrepo-permission).
+**Note:** `rest-dynamic-controller`, to check whether the CR is up-to-date, compares the fields in the CR (spec and status) against the fields in the response body from the external API. **It compares the fields at the same level**, so if the response fields are more nested than the fields in the CR, it will not be able to compare them correctly. This is why the web service returns the response body with the same structure as the CR. For simple cases of this problem, the declarative `fieldMapping` (with an `inResponse` anchor) or a `responseTransform` jq program in the RestDefinition can do the same normalization without a plugin — see [api.md](./api.md#per-verb-tuning-verbsdescription-items).
 
 ```bash
 cat <<EOF | kubectl apply -f -
@@ -599,7 +627,7 @@ spec:
     spec:
       containers:
         - name: github-provider-plugin-krateo
-          image: ghcr.io/krateoplatformops/github-rest-dynamic-controller-plugin:0.0.3
+          image: <your-plugin-image> # e.g. a build of github-rest-dynamic-controller-plugin (unmigrated upstream)
           ports:
             - containerPort: 8080
 EOF
@@ -612,9 +640,9 @@ We can accomplish this by adding the `servers` field to the endpoint in the Open
 In this case, the URL will be `http://github-provider-plugin-krateo.default.svc.cluster.local:8080` because the web service is running in the `default` namespace with the service name `github-provider-plugin-krateo`.
 
 Let's create a new configmap with the updated OpenAPI specification:
-`
+
 ```bash
-kubectl create configmap teamrepo-ws --from-file=samples/cheatsheet/assets/teamrepo_ws.yaml -n gh-system
+kubectl create configmap teamrepo-ws --from-file=go/oasgen-provider/samples/usage_guide/assets/teamrepo_ws.yaml -n gh-system
 ```
 
 As you can see, the new OpenAPI specification also includes another endpoint for the `get` operation that points to the web service URL:
@@ -764,9 +792,9 @@ This indicates that the teamrepo was deleted successfully from GitHub. You can m
    - Manually review and correct any conversion issues
 
 2. **Inconsistent API interfaces:**
-   - Create a web service wrapper to normalize interfaces.
-   - There are no constraints on the technology used for the web service.
-   - Example implementations available in [Java](https://github.com/krateoplatformops/azuredevops-oas3-plugin) and [Python](https://github.com/krateoplatformops/github-oas3-plugin).
+   - First check whether the declarative surface covers it: `fieldMapping`, `requestTransform`/`responseTransform`, `headers`/`queries`, `successCodes`/`tolerateCodes`/`notFoundCodes` — see [api.md](./api.md).
+   - Otherwise create a web service wrapper to normalize the interface.
+   - There are no constraints on the technology used for the web service. (Historical example plugins in Java and Python exist under the pre-migration org and are not linked here.)
 
 3. **Authentication issues:**
    - Verify secret references in Configuration resources

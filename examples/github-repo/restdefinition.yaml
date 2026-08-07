@@ -1,0 +1,30 @@
+apiVersion: ogen.krateo.io/v1alpha1
+kind: RestDefinition
+metadata:
+  name: gh-repo
+  namespace: gh-system
+spec:
+  # The OAS document served from the ConfigMap created in the example README
+  # (source: go/oasgen-provider/samples/usage_guide/assets/repo.yaml).
+  oasPath: configmap://gh-system/repo/repo.yaml
+  resourceGroup: github.ogen.krateo.io
+  resource:
+    kind: Repo
+    # Surfaced in status; `id` and `html_url` are server-generated.
+    additionalStatusFields:
+      - name
+      - id
+      - html_url
+    verbsDescription:
+      - action: create
+        method: POST
+        path: /orgs/{org}/repos
+      - action: get
+        method: GET
+        path: /repos/{org}/{name}
+      - action: update
+        method: PATCH
+        path: /repos/{org}/{name}
+      - action: delete
+        method: DELETE
+        path: /repos/{org}/{name}

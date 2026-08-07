@@ -1,0 +1,15 @@
+# Applied AFTER the RestDefinition is Ready (the RepoConfiguration CRD is generated
+# from it) and after the gh-token Secret exists — see README.md.
+apiVersion: github.ogen.krateo.io/v1alpha1
+kind: RepoConfiguration
+metadata:
+  name: my-repo-config
+  namespace: gh-system
+spec:
+  authentication:
+    bearer:
+      # Reference to the Secret containing the GitHub token.
+      tokenRef:
+        name: gh-token
+        namespace: gh-system
+        key: token
